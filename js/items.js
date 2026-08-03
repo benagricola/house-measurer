@@ -3,10 +3,10 @@
 export const CATEGORIES = {
   appliance:  { label: 'appliance',  color: 0x4a6fa5 },
   worktop:    { label: 'worktop',    color: 0x9a7b4f },
-  cupboard:   { label: 'cupboard',   color: 0x7a5fa0 },
+  cupboard:   { label: 'cupboard',   color: 0x7d9184 },
   shelf:      { label: 'shelf',      color: 0x5f8a5f },
   window:     { label: 'window',     color: 0x6fa7c7 },
-  door:       { label: 'door',       color: 0xb0763d },
+  door:       { label: 'door',       color: 0x9a7a50 },
   radiator:   { label: 'radiator',   color: 0xa85454 },
   extraction: { label: 'extraction', color: 0x5b6770 },
   other:      { label: 'other',      color: 0x8a8a8a },

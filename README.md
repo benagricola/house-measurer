@@ -50,11 +50,16 @@ commit.
   layers (log sheet: add, show/hide, set active) - so the room today can be
   compared against planned layouts.
 - The **3D** button toggles an extruded perspective view: walls to the room
-  height (default 2.6 m, editable in the log sheet), items as boxes at
-  their real heights, orbit/pinch controls. Dollhouse cutaway: whichever
+  height (default 2.6 m, editable in the log sheet), orbit/pinch controls.
+  Rendering is PBR with soft shadows, environment light and procedural
+  canvas textures (plank floor, plaster, cupboard fronts, appliance faces
+  by name - fridge/washer/oven, radiator fins), all generated at runtime so
+  the app stays offline. Windows and doors cut real openings through the
+  walls and render as frame + glass / slab + knobs; hoods get a funnel and
+  chimney; skirting runs along the walls. Dollhouse cutaway: whichever
   walls stand between the camera and the room interior fade to translucent
-  as you orbit, so the inside is always visible; windows and doors embedded
-  in a faded wall fade with it.
+  as you orbit (windows and doors in a faded wall hide with it), so the
+  inside is always visible.
 - The **log** sheet also exports/imports the full state as JSON (download,
   copy to clipboard, paste or file) for backup and moving between devices.
 

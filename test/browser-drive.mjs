@@ -432,7 +432,7 @@ const occ2 = await js(`(() => {
   v.camera.position.set(t.x - 7, 4, t.z);
   v.controls.update();
   v.updateOcclusion(); v.requestRender();
-  return { win: v.mountRecs.map(m => m.mesh.material.transparent), fadedKeys: [...v.fadedKeys] };
+  return { win: v.mountRecs.map(m => m.faded), fadedKeys: [...v.fadedKeys] };
 })()`);
 assert(occ2.win.length === 1 && occ2.win[0] === true, 'window fades with its wall');
 
