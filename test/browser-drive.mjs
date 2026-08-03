@@ -399,6 +399,46 @@ assert(await js('window.app.ui.view') === '3d', '3D view active');
 assert(await js('!!window.app.view3d'), 'View3D created');
 const nMeshes = await js('window.app.view3d.group.children.length');
 assert(nMeshes >= 9, `3D scene has walls+floor+items (${nMeshes} meshes)`);
+
+// Dollhouse cutaway: camera-side walls fade, far walls stay solid.
+const occ0 = await js(`(() => {
+  const v = window.app.view3d;
+  return { walls: v.wallRecs.map(w => ({ key: w.key, mid: w.mid, faded: w.mesh.material === v.wallFaded })),
+           cam: { x: v.camera.position.x, y: -v.camera.position.z } };
+})()`);
+const wdist = (w) => Math.hypot(w.mid.x - occ0.cam.x, w.mid.y - occ0.cam.y);
+const sorted = [...occ0.walls].sort((a, b) => wdist(a) - wdist(b));
+assert(occ0.walls.filter((w) => w.faded).length === 2, `two camera-side walls faded (${occ0.walls.filter((w) => w.faded).length})`);
+assert(sorted[0].faded, 'nearest wall to camera is faded');
+assert(!sorted.at(-1).faded, 'farthest wall stays solid');
+
+// Orbit to the far (north) side: the fades swap.
+const occ1 = await js(`(() => {
+  const v = window.app.view3d;
+  const t = v.controls.target;
+  v.camera.position.set(t.x + 0.5, 5, t.z - 7);
+  v.controls.update();
+  v.updateOcclusion(); v.requestRender();
+  return v.wallRecs.map(w => ({ mid: w.mid, faded: w.mesh.material === v.wallFaded }));
+})()`);
+const north = occ1.reduce((a, b) => (a.mid.y > b.mid.y ? a : b));
+const south = occ1.reduce((a, b) => (a.mid.y < b.mid.y ? a : b));
+assert(north.faded && !south.faded, 'orbiting to the far side swaps which walls fade');
+
+// From the west the window's wall faces the camera: the window fades too.
+const occ2 = await js(`(() => {
+  const v = window.app.view3d;
+  const t = v.controls.target;
+  v.camera.position.set(t.x - 7, 4, t.z);
+  v.controls.update();
+  v.updateOcclusion(); v.requestRender();
+  return { win: v.mountRecs.map(m => m.mesh.material.transparent), fadedKeys: [...v.fadedKeys] };
+})()`);
+assert(occ2.win.length === 1 && occ2.win[0] === true, 'window fades with its wall');
+
+// Back to the default pose for the screenshot.
+await js('window.app.view3d.refit(); window.app.render();');
+await sleep(300);
 await shot('09-3d');
 await click('#view3d-btn');
 assert(await js('window.app.ui.view') === 'plan', 'back to plan');

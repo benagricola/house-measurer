@@ -51,7 +51,10 @@ commit.
   compared against planned layouts.
 - The **3D** button toggles an extruded perspective view: walls to the room
   height (default 2.6 m, editable in the log sheet), items as boxes at
-  their real heights, orbit/pinch controls.
+  their real heights, orbit/pinch controls. Dollhouse cutaway: whichever
+  walls stand between the camera and the room interior fade to translucent
+  as you orbit, so the inside is always visible; windows and doors embedded
+  in a faded wall fade with it.
 - The **log** sheet also exports/imports the full state as JSON (download,
   copy to clipboard, paste or file) for backup and moving between devices.
 
