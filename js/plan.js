@@ -1,7 +1,17 @@
 // Top-down plan renderer: three.js orthographic scene + touch gestures +
-// DOM overlay for text labels. Dumb view: main.js hands it a display list.
+// DOM overlay for text labels. Dumb view: main.js hands it a display list:
+// {
+//   points:   [{x, y, style, refIndex, isLast}],
+//   segments: [{x1, y1, x2, y2, style: 'ab'|'ray'|'wall'|'wallActive'}],
+//   circles:  [{cx, cy, r}],
+//   ghosts:   [{x, y, primary}],
+//   rects:    [{x, y, rot, w, d, color, opacity, halo}],   // items
+//   polygons: [{pts: [{x,y}...], color, opacity}],          // room fill
+//   handles:  [{x, y}],                                     // rotate handle
+//   labels:   [{key, x, y, text, cls, dx, dy}],
+// }
 
-import * as THREE from '../vendor/three.module.min.js';
+import * as THREE from 'three';
 
 const BG = 0xf6f4ee;
 const COLORS = {
@@ -9,6 +19,8 @@ const COLORS = {
   gridMajor: 0xd6d0bf,
   segment: 0x8a867a,
   ray: 0xb0aa9c,
+  wall: 0x3a3a40,
+  wallActive: 0xe8960c,
   circle: 0xc9c3b2,
   anchor: 0x1f2a44,
   point: 0x0e7a6f,
@@ -16,6 +28,8 @@ const COLORS = {
   refRing: 0xe8960c,
   lastRing: 0x9fbfba,
   ghost: 0x0e7a6f,
+  halo: 0xe8960c,
+  handle: 0xe8960c,
 };
 
 const NICE = [0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50];
@@ -59,7 +73,7 @@ export class PlanView {
     this.group = new THREE.Group();
     this.scene.add(this.group);
 
-    this.content = { points: [], segments: [], circles: [], ghosts: [], labels: [] };
+    this.content = {};
     this.labelPool = new Map();
 
     this._dirty = false;
@@ -174,13 +188,43 @@ export class PlanView {
 
   rebuild() {
     this.group.clear();
+    for (const g of this._tempGeos || []) g.dispose();
+    this._tempGeos = [];
     const s = this.worldPerPx;
     const c = this.content;
 
+    for (const poly of c.polygons || []) {
+      if (poly.pts.length < 3) continue;
+      const shape = new THREE.Shape(poly.pts.map((p) => new THREE.Vector2(p.x, p.y)));
+      const geo = new THREE.ShapeGeometry(shape);
+      this._tempGeos.push(geo);
+      const mesh = new THREE.Mesh(geo, this.mat('mesh', poly.color, poly.opacity));
+      mesh.position.z = 0.2;
+      this.group.add(mesh);
+    }
+
     for (const seg of c.segments || []) {
-      const widthPx = seg.style === 'ab' ? 2.5 : 1.5;
-      const color = seg.style === 'ab' ? COLORS.segment : COLORS.ray;
-      this.group.add(this.quad(seg.x1, seg.y1, seg.x2, seg.y2, widthPx * s, color, seg.style === 'ab' ? 0.5 : 0.6));
+      let widthPx = 1.5, color = COLORS.ray, z = 0.6;
+      if (seg.style === 'ab') { widthPx = 2.5; color = COLORS.segment; z = 0.5; }
+      if (seg.style === 'wall') { widthPx = Math.max(3, 0.08 / s); color = COLORS.wall; z = 0.55; }
+      if (seg.style === 'wallActive') { widthPx = Math.max(3, 0.08 / s); color = COLORS.wallActive; z = 0.56; }
+      this.group.add(this.quad(seg.x1, seg.y1, seg.x2, seg.y2, widthPx * s, color, z));
+    }
+
+    for (const r of c.rects || []) {
+      if (r.halo) {
+        const pad = 5 * s;
+        const halo = new THREE.Mesh(this.geoQuad, this.mat('mesh', COLORS.halo, 0.85));
+        halo.position.set(r.x, r.y, 0.68);
+        halo.rotation.z = r.rot;
+        halo.scale.set(r.w + pad * 2, r.d + pad * 2, 1);
+        this.group.add(halo);
+      }
+      const m = new THREE.Mesh(this.geoQuad, this.mat('mesh', r.color, r.opacity ?? 0.8));
+      m.position.set(r.x, r.y, 0.7);
+      m.rotation.z = r.rot;
+      m.scale.set(Math.max(r.w, 2 * s), Math.max(r.d, 2 * s), 1);
+      this.group.add(m);
     }
 
     for (const circ of c.circles || []) {
@@ -220,6 +264,17 @@ export class PlanView {
         ring.scale.set(r + 5 * s, r + 5 * s, 1);
         this.group.add(ring);
       }
+    }
+
+    for (const hd of c.handles || []) {
+      const ring = new THREE.Mesh(this.geoRing, this.mat('mesh', COLORS.handle));
+      ring.position.set(hd.x, hd.y, 1.2);
+      ring.scale.set(10 * s, 10 * s, 1);
+      this.group.add(ring);
+      const dot = new THREE.Mesh(this.geoCircle, this.mat('mesh', COLORS.handle));
+      dot.position.set(hd.x, hd.y, 1.2);
+      dot.scale.set(4 * s, 4 * s, 1);
+      this.group.add(dot);
     }
 
     this.requestRender();
@@ -278,22 +333,28 @@ export class PlanView {
     });
   }
 
-  // --- gestures: 1-finger pan / tap, 2-finger pinch zoom, wheel ------------
+  // --- gestures ------------------------------------------------------------
+  // 1-finger: tap, pan, or (if main claims it via onDragStart) object drag.
+  // 2-finger: pinch zoom. Wheel: zoom.
   initGestures() {
     const c = this.canvas;
     this.pointers = new Map();
     this.gesture = null;
 
     c.addEventListener('pointerdown', (e) => {
-      c.setPointerCapture(e.pointerId);
+      try { c.setPointerCapture(e.pointerId); } catch {} // pointer may already be gone
       this.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
       if (this.pointers.size === 1) {
+        const local = this.eventToLocal(e.clientX, e.clientY);
+        const world = this.screenToWorld(local.x, local.y);
+        const claimed = this.cb.onDragStart ? this.cb.onDragStart(world, local) : false;
         this.gesture = {
-          type: 'pan', id: e.pointerId, t0: performance.now(),
+          type: claimed ? 'drag' : 'pan', id: e.pointerId, t0: performance.now(),
           startX: e.clientX, startY: e.clientY,
           lastX: e.clientX, lastY: e.clientY, moved: false,
         };
       } else if (this.pointers.size === 2) {
+        if (this.gesture?.type === 'drag' && this.cb.onDragEnd) this.cb.onDragEnd(true);
         const [p1, p2] = [...this.pointers.values()];
         this.gesture = {
           type: 'pinch',
@@ -312,12 +373,17 @@ export class PlanView {
       p.y = e.clientY;
       const g = this.gesture;
       if (!g) return;
-      if (g.type === 'pan' && e.pointerId === g.id) {
+      if ((g.type === 'pan' || g.type === 'drag') && e.pointerId === g.id) {
         const dx = e.clientX - g.lastX, dy = e.clientY - g.lastY;
         if (Math.hypot(e.clientX - g.startX, e.clientY - g.startY) > 9) g.moved = true;
         if (g.moved) {
-          const s = this.worldPerPx;
-          this.setView(this.cx - dx * s, this.cy + dy * s, this.viewH);
+          if (g.type === 'pan') {
+            const s = this.worldPerPx;
+            this.setView(this.cx - dx * s, this.cy + dy * s, this.viewH);
+          } else if (this.cb.onDragMove) {
+            const local = this.eventToLocal(e.clientX, e.clientY);
+            this.cb.onDragMove(this.screenToWorld(local.x, local.y), local);
+          }
         }
         g.lastX = e.clientX;
         g.lastY = e.clientY;
@@ -345,8 +411,9 @@ export class PlanView {
     const end = (e) => {
       const g = this.gesture;
       this.pointers.delete(e.pointerId);
-      if (g && g.type === 'pan' && e.pointerId === g.id) {
+      if (g && (g.type === 'pan' || g.type === 'drag') && e.pointerId === g.id) {
         const quick = performance.now() - g.t0 < 700;
+        if (g.type === 'drag' && this.cb.onDragEnd) this.cb.onDragEnd(false);
         if (!g.moved && quick && e.type === 'pointerup' && this.cb.onTap) {
           const local = this.eventToLocal(e.clientX, e.clientY);
           this.cb.onTap(this.screenToWorld(local.x, local.y), local);

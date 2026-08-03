@@ -110,6 +110,126 @@ export function solve(state) {
   return { pos, gaps, errors };
 }
 
+// Solve A x = b by Gaussian elimination with partial pivoting.
+// A is an array of Float64Array rows; both are destroyed. Returns x or null.
+function solveLinear(A, b) {
+  const n = b.length;
+  const x = new Float64Array(n);
+  for (let col = 0; col < n; col++) {
+    let piv = col;
+    for (let r = col + 1; r < n; r++) if (Math.abs(A[r][col]) > Math.abs(A[piv][col])) piv = r;
+    if (Math.abs(A[piv][col]) < 1e-14) return null;
+    [A[col], A[piv]] = [A[piv], A[col]];
+    [b[col], b[piv]] = [b[piv], b[col]];
+    for (let r = col + 1; r < n; r++) {
+      const f = A[r][col] / A[col][col];
+      if (!f) continue;
+      for (let c = col; c < n; c++) A[r][c] -= f * A[col][c];
+      b[r] -= f * b[col];
+    }
+  }
+  for (let r = n - 1; r >= 0; r--) {
+    let s = b[r];
+    for (let c = r + 1; c < n; c++) s -= A[r][c] * x[c];
+    x[r] = s / A[r][r];
+  }
+  return x;
+}
+
+// Least-squares adjustment (Gauss-Newton) of all chain-solved positions
+// against ALL measurements. Distributes laser noise across the network and
+// yields a residual per measurement. Gauge: first point pinned at the
+// origin, second point pinned to the +x axis.
+// Returns { pos, mres: Map<measId, m>, pres: Map<pointId, m> } or null when
+// there is nothing to adjust.
+export function adjust(state, chain) {
+  const ids = state.points.filter((p) => chain.pos.has(p.id)).map((p) => p.id);
+  if (ids.length < 2) return null;
+  const idx = new Map(ids.map((id, i) => [id, i]));
+  const varOf = (i) => (i === 0 ? [-1, -1] : i === 1 ? [0, -1] : [2 * i - 3, 2 * i - 2]);
+  const nv = 2 * ids.length - 3;
+  const X = ids.map((id) => ({ ...chain.pos.get(id) }));
+  const meas = state.measurements.filter((m) => idx.has(m.p) && idx.has(m.q));
+  if (!meas.length) return null;
+
+  for (let iter = 0; iter < 12; iter++) {
+    const A = Array.from({ length: nv }, () => new Float64Array(nv));
+    const g = new Float64Array(nv);
+    for (const m of meas) {
+      const i = idx.get(m.p), j = idx.get(m.q);
+      const dx = X[i].x - X[j].x, dy = X[i].y - X[j].y;
+      const dist = Math.hypot(dx, dy) || 1e-12;
+      const r = dist - m.d;
+      const ux = dx / dist, uy = dy / dist;
+      const entries = [];
+      const [xi, yi] = varOf(i), [xj, yj] = varOf(j);
+      if (xi >= 0) entries.push([xi, ux]);
+      if (yi >= 0) entries.push([yi, uy]);
+      if (xj >= 0) entries.push([xj, -ux]);
+      if (yj >= 0) entries.push([yj, -uy]);
+      for (const [a, va] of entries) {
+        g[a] += va * r;
+        for (const [b, vb] of entries) A[a][b] += va * vb;
+      }
+    }
+    for (let k = 0; k < nv; k++) A[k][k] += 1e-9;
+    const delta = solveLinear(A, g);
+    if (!delta) break;
+    let maxd = 0;
+    ids.forEach((id, i) => {
+      const [xv, yv] = varOf(i);
+      if (xv >= 0) { X[i].x -= delta[xv]; maxd = Math.max(maxd, Math.abs(delta[xv])); }
+      if (yv >= 0) { X[i].y -= delta[yv]; maxd = Math.max(maxd, Math.abs(delta[yv])); }
+    });
+    if (maxd < 1e-9) break;
+  }
+
+  const mres = new Map(), pres = new Map();
+  for (const m of meas) {
+    const i = idx.get(m.p), j = idx.get(m.q);
+    const r = Math.hypot(X[i].x - X[j].x, X[i].y - X[j].y) - m.d;
+    mres.set(m.id, r);
+    pres.set(m.p, Math.max(pres.get(m.p) || 0, Math.abs(r)));
+    pres.set(m.q, Math.max(pres.get(m.q) || 0, Math.abs(r)));
+  }
+  return { pos: new Map(ids.map((id, i) => [id, X[i]])), mres, pres };
+}
+
+// Chain solve + least-squares adjustment in one call.
+// Returns { pos, gaps, errors, mres, pres }.
+export function solveAdjusted(state) {
+  const chain = solve(state);
+  const adj = adjust(state, chain);
+  if (!adj) return { ...chain, mres: new Map(), pres: new Map() };
+  return { pos: adj.pos, gaps: chain.gaps, errors: chain.errors, mres: adj.mres, pres: adj.pres };
+}
+
+// Distance from point to segment [a, b], plus the clamped parameter t.
+export function pointSegDist(p, a, b) {
+  const abx = b.x - a.x, aby = b.y - a.y;
+  const len2 = abx * abx + aby * aby;
+  const t = len2 ? Math.max(0, Math.min(1, ((p.x - a.x) * abx + (p.y - a.y) * aby) / len2)) : 0;
+  const cx = a.x + abx * t, cy = a.y + aby * t;
+  return { d: Math.hypot(p.x - cx, p.y - cy), t, cx, cy };
+}
+
+// Corners of a rotated rectangle item {x, y, rot, w, d} (centre-based), CCW.
+export function itemCorners(it) {
+  const c = Math.cos(it.rot), s = Math.sin(it.rot);
+  const hw = it.w / 2, hd = it.d / 2;
+  return [[-hw, -hd], [hw, -hd], [hw, hd], [-hw, hd]].map(([lx, ly]) => ({
+    x: it.x + lx * c - ly * s,
+    y: it.y + lx * s + ly * c,
+  }));
+}
+
+export function pointInItem(p, it, marginM = 0) {
+  const c = Math.cos(-it.rot), s = Math.sin(-it.rot);
+  const dx = p.x - it.x, dy = p.y - it.y;
+  const lx = dx * c - dy * s, ly = dx * s + dy * c;
+  return Math.abs(lx) <= it.w / 2 + marginM && Math.abs(ly) <= it.d / 2 + marginM;
+}
+
 // Point name from creation index: A..Z, AA, AB, ...
 export function pointName(i) {
   let n = i, s = '';

@@ -7,6 +7,7 @@
 <title>house measurer</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='4' cy='11' r='2.4' fill='%231f2a44'/%3E%3Ccircle cx='12' cy='5' r='2.4' fill='%230e7a6f'/%3E%3Cpath d='M5.7 9.7 L10.3 6.3' stroke='%238a867a' stroke-width='1.4'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="style.css">
+<script type="importmap">{ "imports": { "three": "./vendor/three.module.min.js" } }</script>
 </head>
 <body>
 
@@ -16,6 +17,8 @@
     <button id="redo" title="redo (ctrl+y)">redo</button>
     <div id="title">house measurer</div>
     <div id="gap-pill" hidden></div>
+    <button id="view3d-btn" title="toggle 3D view">3D</button>
+    <button id="log-btn" title="measurement log, layers, data">log</button>
     <button id="fit" title="fit everything in view">fit</button>
     <button id="help" title="help">?</button>
   </header>
@@ -26,37 +29,106 @@
       <div id="overlay"></div>
       <div id="scalebar"></div>
     </div>
+    <div id="view3d-wrap" hidden>
+      <canvas id="plan3d"></canvas>
+    </div>
 
     <section id="panel">
       <div id="status"></div>
+      <div id="modebar">
+        <button data-mode="measure">measure</button>
+        <button data-mode="wall">walls</button>
+        <button data-mode="item">items</button>
+        <button data-mode="move">move</button>
+      </div>
       <div id="refbar">
         <span>from</span>
         <span class="refslot" id="ref0"></span>
         <span class="refslot" id="ref1"></span>
+        <button id="check-btn" title="record the typed distance between the two selected points">record</button>
       </div>
       <div id="fields">
         <div class="field" id="field0"><label></label><div class="val"></div><div class="interp"></div></div>
         <div class="field" id="field1"><label></label><div class="val"></div><div class="interp"></div></div>
+      </div>
+      <div id="wallbar">
+        <button id="wall-finish">finish wall</button>
+        <button id="wall-back">step back</button>
+      </div>
+      <div id="movebar">
+        <span id="sel-name" class="dim"></span>
+        <button id="sel-edit">edit</button>
+        <button id="sel-lock">lock</button>
+        <button id="sel-del">delete</button>
+      </div>
+      <div id="itembar">
+        <div id="item-list"></div>
+        <button id="item-new">+ new item</button>
       </div>
       <div id="keypad"></div>
     </section>
   </div>
 </div>
 
+<div id="log-sheet" hidden>
+  <div id="log-card">
+    <button id="log-close">x</button>
+    <h2>log</h2>
+    <div id="log-list"></div>
+    <div id="import-box" hidden>
+      <textarea id="import-text" placeholder="paste exported JSON here"></textarea>
+      <div class="row">
+        <input type="file" id="import-file" accept=".json,application/json">
+        <button id="import-apply">apply</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="item-form" hidden>
+  <div id="item-card">
+    <button id="if-close">x</button>
+    <h2>item</h2>
+    <div id="if-presets"></div>
+    <div class="form-grid">
+      <label>name</label><input id="if-name" placeholder="fridge">
+      <label>category</label><select id="if-category"></select>
+      <label>width cm</label><input id="if-w" type="number" min="1">
+      <label>depth cm</label><input id="if-d" type="number" min="1">
+      <label>height cm</label><input id="if-h" type="number" min="1">
+      <label>off floor cm</label><input id="if-z0" type="number" min="0">
+      <label>layer</label><select id="if-layer"></select>
+    </div>
+    <div class="row" id="if-place-row">
+      <button id="if-place-measure">place by 2 distances</button>
+      <button id="if-place-wall">place on a wall</button>
+      <button id="if-place-drop">drop in view</button>
+    </div>
+    <div class="row">
+      <button id="if-save">save</button>
+      <button id="if-lock">lock</button>
+      <button id="if-delete" class="danger">delete</button>
+    </div>
+  </div>
+</div>
+
 <div id="help-overlay" hidden>
   <div id="help-card">
     <button id="help-close">x</button>
-    <h2>how it works</h2>
+    <h2>measuring</h2>
     <ol>
       <li>Mark two anchor points A and B on the walls with tape. Measure A to B and type it in.</li>
       <li>For every new point: tap 2 already-fixed points on the plan, type the measured distance to each, press OK.</li>
       <li>Two positions match those distances - the marked one is placed. Tap the other candidate, or press flip, if it is on the wrong side.</li>
+      <li>Extra measurements between existing points: select the 2 points, type the distance, press record. Residuals show per point; edit any measurement in the log.</li>
     </ol>
+    <h2>walls, items, 3D</h2>
+    <p>In <b>walls</b> mode tap points in order; tapping the first point again closes the room. In <b>items</b> mode create an item, then place it by two measured distances to a corner, on a wall (offset from a wall end), or drop it and drag in <b>move</b> mode. The 3D button shows everything extruded at real heights.</p>
     <h2>units</h2>
-    <p>A number with a decimal point is metres, without is centimetres: <b>342</b> = 3.42 m, <b>3.42</b> = 3.42 m, <b>84</b> = 84 cm. For a whole number of metres add a dot: <b>15.</b> = 15 m.</p>
+    <p>A number with a decimal point is metres, without is centimetres: <b>342</b> = 3.42 m, <b>3.42</b> = 3.42 m, <b>84</b> = 84 cm, <b>15.</b> = 15 m.</p>
     <h2>keys</h2>
-    <p>Drag to pan, pinch or scroll to zoom. On a keyboard: digits, Enter = OK, Tab = other field, f = flip, ctrl+z undo.</p>
-    <p class="fine">Everything is saved on this device automatically. Undo covers every step.</p>
+    <p>Drag to pan, pinch or scroll to zoom. Keyboard: digits, Enter = OK, Tab = other field, f = flip, Escape = cancel, ctrl+z undo.</p>
+    <p class="fine">Everything is saved on this device automatically. Export JSON from the log sheet for backup or to move devices.</p>
     <button id="clear-all">clear everything</button>
   </div>
 </div>
