@@ -312,7 +312,9 @@ export class View3D {
         const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
         let n = { x: -dir.y, y: dir.x };
         if ((cen.x - mid.x) * n.x + (cen.y - mid.y) * n.y > 0) n = { x: -n.x, y: -n.y };
-        this.wallRecs.push({ mesh, mid, n, key });
+        // Only closed rooms get the cutaway - an open run has no inside to
+        // reveal, and fading it just makes a half-drawn survey look empty.
+        this.wallRecs.push({ mesh, mid, n, key, cuttable: wall.closed });
 
         // Skirting on the room side, skipped where a door opens.
         const hasDoor = (openings.get(key) || []).some((it) => it.category === 'door');
@@ -395,7 +397,8 @@ export class View3D {
     const cam = { x: this.camera.position.x, y: -this.camera.position.z };
     const faded = new Set();
     for (const w of this.wallRecs) {
-      const outside = (cam.x - w.mid.x) * w.n.x + (cam.y - w.mid.y) * w.n.y > 0.01;
+      const outside = w.cuttable &&
+        (cam.x - w.mid.x) * w.n.x + (cam.y - w.mid.y) * w.n.y > 0.01;
       if (outside) {
         if (!w.mesh.userData.solidMat) w.mesh.userData.solidMat = w.mesh.material;
         w.mesh.material = this.wallFaded;
