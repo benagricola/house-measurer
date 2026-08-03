@@ -416,7 +416,29 @@ export class PlanView {
         if (g.type === 'drag' && this.cb.onDragEnd) this.cb.onDragEnd(false);
         if (!g.moved && quick && e.type === 'pointerup' && this.cb.onTap) {
           const local = this.eventToLocal(e.clientX, e.clientY);
-          this.cb.onTap(this.screenToWorld(local.x, local.y), local);
+          const consumed = this.cb.onTap(this.screenToWorld(local.x, local.y), local);
+          // Double-tap on empty canvas zooms in - the one-handed zoom
+          // (pinch needs a second hand). Taps that hit something act
+          // immediately and never count toward a double-tap.
+          if (consumed) {
+            this._freeTap = null;
+          } else {
+            const now = performance.now();
+            const prev = this._freeTap;
+            if (prev && now - prev.t < 350 && Math.hypot(local.x - prev.x, local.y - prev.y) < 44) {
+              this._freeTap = null;
+              const before = this.screenToWorld(local.x, local.y);
+              const viewH = Math.max(0.5, this.viewH / 1.7);
+              const s1 = viewH / this.h;
+              this.setView(
+                before.x - (local.x - this.w / 2) * s1,
+                before.y + (local.y - this.h / 2) * s1,
+                viewH
+              );
+            } else {
+              this._freeTap = { t: now, x: local.x, y: local.y };
+            }
+          }
         }
         this.gesture = null;
       }

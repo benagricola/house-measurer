@@ -217,8 +217,25 @@ assert((await state()).points.length === 3, 'undo removes D');
 await click('#redo');
 assert((await state()).points.length === 4, 'redo restores D');
 
+// One-handed zoom: double-tap on empty canvas zooms in about the tap.
+await settleFrame();
+const vh0 = await js('window.app.plan.viewH');
+const corner = await js(`(() => {
+  const r = document.getElementById('plan').getBoundingClientRect();
+  return { x: Math.round(r.left + 36), y: Math.round(r.top + 36) };
+})()`);
+await tapAtRaw(corner.x, corner.y);
+await tapAtRaw(corner.x, corner.y);
+const vh1 = await js('window.app.plan.viewH');
+assert(vh1 < vh0 * 0.7, `double-tap zooms in (${vh0.toFixed(2)} -> ${vh1.toFixed(2)})`);
+await click('#fit');
+
 // --- M2: walls --------------------------------------------------------------
+// Entering wall mode grows the canvas (keypad hides); refit at the new
+// aspect so every point is actually on screen before tapping.
 await click('#modebar [data-mode="wall"]');
+await settleFrame();
+await click('#fit');
 for (const n of ['A', 'C', 'D', 'B', 'A']) await tapPoint(n);
 st = await state();
 assert(st.walls.length === 1 && st.walls[0]?.closed, 'wall drawn A-C-D-B and closed');

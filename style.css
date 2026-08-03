@@ -67,6 +67,7 @@ header button:disabled { opacity: 0.35; }
   padding: 5px 10px;
   border-radius: 99px;
   color: #fff;
+  white-space: nowrap;
 }
 #gap-pill.good { background: var(--green); }
 #gap-pill.warn { background: var(--amber); }

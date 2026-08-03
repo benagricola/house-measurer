@@ -335,42 +335,47 @@ function pressOk() {
 
 // --- canvas interaction ----------------------------------------------------
 
+// Returns true when the tap hit something and acted on it; unconsumed taps
+// feed the plan view's double-tap zoom.
 function handleTap(world, screen) {
-  if (ui.view === '3d') return;
+  if (ui.view === '3d') return false;
 
   if (ui.mode === 'wall') {
     const pid = hitPoint(screen);
-    if (pid == null) return;
+    if (pid == null) return false;
     const r = store.addWallPoint(ui.activeWallId, pid);
     ui.activeWallId = r.closed ? null : r.wallId;
     say(r.closed ? 'Room outline closed' : 'Wall: tap the next point (first point again closes)', r.closed ? 'good' : '');
-    return;
+    return true;
   }
 
   if (ui.mode === 'move' && !ui.flow) {
     const iid = hitItem(world);
     ui.selItem = iid;
     ui.message = null;
-    return render();
+    render();
+    return iid != null;
   }
 
   if (ui.flow?.kind === 'item-side') {
     for (const cand of sideCandidates(ui.flow)) {
       if (pointInItem(world, { ...cand.rect }, 4 * plan.worldPerPx)) {
-        return commitItemAt(cand.rect, ui.flow.draft);
+        commitItemAt(cand.rect, ui.flow.draft);
+        return true;
       }
     }
-    return;
+    return false;
   }
   if (ui.flow?.kind === 'item-wallmount') {
     const wall = hitWall(world, screen);
-    if (!wall) return say('Tap a wall segment (draw walls first in wall mode)', 'warn');
+    if (!wall) { say('Tap a wall segment (draw walls first in wall mode)', 'warn'); return false; }
     const nearEnd = wall.t <= 0.5 ? 0 : 1;
     ui.flow = { kind: 'item-walloffset', draft: ui.flow.draft, wall, endIdx: nearEnd };
     ui.fields = ['', ''];
     ui.active = 0;
     ui.flowSide = 1;
-    return say('Distance from the marked wall end to the item edge (flip swaps end)');
+    say('Distance from the marked wall end to the item edge (flip swaps end)');
+    return true;
   }
   if (ui.flow?.kind === 'item-c2') {
     // A wall tap aligns the item with that wall, extending toward the tap.
@@ -390,7 +395,8 @@ function handleTap(world, screen) {
         if (ahead < 0) dir = { x: -dir.x, y: -dir.y };
         ui.flow = { kind: 'item-side', draft: ui.flow.draft, c1, dir, wEff: ui.flow.draft.w };
         ui.flowSide = 1;
-        return say('Aligned with wall - tap the matching rectangle, OK commits');
+        say('Aligned with wall - tap the matching rectangle, OK commits');
+        return true;
       }
     }
   }
@@ -401,12 +407,19 @@ function handleTap(world, screen) {
     if (pv && pv.cands && pv.cands.gap <= CLAMP_TOL) {
       for (const [side, p] of [[+1, pv.cands.left], [-1, pv.cands.right]]) {
         const sp = plan.worldToScreen(p.x, p.y);
-        if (Math.hypot(sp.x - screen.x, sp.y - screen.y) < 30) return commitPoint(side);
+        if (Math.hypot(sp.x - screen.x, sp.y - screen.y) < 30) {
+          commitPoint(side);
+          return true;
+        }
       }
     }
     const pid = hitPoint(screen);
-    if (pid != null) return toggleRef(pid);
+    if (pid != null) {
+      toggleRef(pid);
+      return true;
+    }
   }
+  return false;
 }
 
 function handleDragStart(world) {
@@ -863,14 +876,16 @@ function renderPlan() {
     }
   }
 
-  // Points, names, residual badges.
+  // Points, names, residual badges. Reference rings only where reference
+  // selection means something (measure mode and the two-distance flows).
+  const showRefs = ui.mode === 'measure' || twoFieldFlow() && ui.flow;
   for (const pt of pts) {
     const p = pos(pt.id);
     if (!p) continue;
     content.points.push({
       x: p.x, y: p.y,
       style: pt.fix ? 'point' : 'anchor',
-      refIndex: ui.refs.indexOf(pt.id) >= 0 ? ui.refs.indexOf(pt.id) : null,
+      refIndex: showRefs && ui.refs.indexOf(pt.id) >= 0 ? ui.refs.indexOf(pt.id) : null,
       isLast: pt.id === ui.lastId,
     });
     content.labels.push({ key: `p${pt.id}`, x: p.x, y: p.y, text: pt.name, cls: 'name', dy: -18 });
