@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#f6f4ee">
+<title>house measurer</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='4' cy='11' r='2.4' fill='%231f2a44'/%3E%3Ccircle cx='12' cy='5' r='2.4' fill='%230e7a6f'/%3E%3Cpath d='M5.7 9.7 L10.3 6.3' stroke='%238a867a' stroke-width='1.4'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div id="app">
+  <header>
+    <button id="undo" title="undo (ctrl+z)">undo</button>
+    <button id="redo" title="redo (ctrl+y)">redo</button>
+    <div id="title">house measurer</div>
+    <div id="gap-pill" hidden></div>
+    <button id="fit" title="fit everything in view">fit</button>
+    <button id="help" title="help">?</button>
+  </header>
+
+  <div id="body">
+    <div id="canvas-wrap">
+      <canvas id="plan"></canvas>
+      <div id="overlay"></div>
+      <div id="scalebar"></div>
+    </div>
+
+    <section id="panel">
+      <div id="status"></div>
+      <div id="refbar">
+        <span>from</span>
+        <span class="refslot" id="ref0"></span>
+        <span class="refslot" id="ref1"></span>
+      </div>
+      <div id="fields">
+        <div class="field" id="field0"><label></label><div class="val"></div><div class="interp"></div></div>
+        <div class="field" id="field1"><label></label><div class="val"></div><div class="interp"></div></div>
+      </div>
+      <div id="keypad"></div>
+    </section>
+  </div>
+</div>
+
+<div id="help-overlay" hidden>
+  <div id="help-card">
+    <button id="help-close">x</button>
+    <h2>how it works</h2>
+    <ol>
+      <li>Mark two anchor points A and B on the walls with tape. Measure A to B and type it in.</li>
+      <li>For every new point: tap 2 already-fixed points on the plan, type the measured distance to each, press OK.</li>
+      <li>Two positions match those distances - the marked one is placed. Tap the other candidate, or press flip, if it is on the wrong side.</li>
+    </ol>
+    <h2>units</h2>
+    <p>A number with a decimal point is metres, without is centimetres: <b>342</b> = 3.42 m, <b>3.42</b> = 3.42 m, <b>84</b> = 84 cm. For a whole number of metres add a dot: <b>15.</b> = 15 m.</p>
+    <h2>keys</h2>
+    <p>Drag to pan, pinch or scroll to zoom. On a keyboard: digits, Enter = OK, Tab = other field, f = flip, ctrl+z undo.</p>
+    <p class="fine">Everything is saved on this device automatically. Undo covers every step.</p>
+    <button id="clear-all">clear everything</button>
+  </div>
+</div>
+
+<script type="module" src="js/main.js"></script>
+</body>
+</html>
