@@ -37,8 +37,13 @@ client-side, state in localStorage, no build step.
 ## Floors and stairs
 
 All floors share one plan coordinate system; a floor only adds an
-elevation. Add a floor in the data sheet (name + floor-to-floor height in
-cm, e.g. ceiling + joist void). To anchor the new floor, tap a ghosted
+elevation. Add a floor in the data sheet (the initial floor-to-floor
+number is just a placeholder - you will rarely know it). Derive the real
+value with the **floor-to-floor calculator** in the data sheet: riser
+count x riser height with optional odd first/last risers (old staircases
+are rarely uniform), or ceiling height at the stairwell + the floor
+build-up measurable at the opening's trimmer. Either sets the floor's
+elevation in one tap. To anchor the new floor, tap a ghosted
 point from the floor below that sits directly beneath a usable spot
 (stairwell corner, external wall corner - or drop a plumb line) and press
 **stack here**: a twin point is pinned at the same plan position on the
@@ -58,6 +63,11 @@ staircase with the builders' method - count risers, measure one riser,
 one going and the width; the total rise should match the floor-to-floor
 offset, which is your cross-check. An L-shaped stair is two flights plus
 a landing ("other" item).
+
+Raised floor sections (a stepped-up corner of a room, a hearth plinth)
+are the **raised floor** item category: a platform with a plank top and
+timber edges, placed and measured like any other item - two distances to
+a corner, or corners tapped from measured points.
 
 Units: a number **with** a decimal point is metres, **without** is
 centimetres. `342` = 3.42 m, `3.42` = 3.42 m, `84` = 84 cm. For a whole

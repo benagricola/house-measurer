@@ -10,6 +10,7 @@ export const CATEGORIES = {
   radiator:   { label: 'radiator',   color: 0xa85454 },
   extraction: { label: 'extraction', color: 0x5b6770 },
   stairs:     { label: 'stairs',     color: 0x8a7f66 },
+  platform:   { label: 'raised floor', color: 0xc2b088 },
   other:      { label: 'other',      color: 0x8a8a8a },
 };
 
@@ -37,7 +38,19 @@ export const PRESETS = [
   // w = horizontal run of the flight (ascends along +w), d = stair width,
   // h = total rise (usually the floor-to-floor height).
   { name: 'staircase', category: 'stairs', w: 2.7, d: 0.85, h: 2.9, z0: 0 },
+  { name: 'raised floor', category: 'platform', w: 2.0, d: 1.5, h: 0.15, z0: 0 },
 ];
+
+// Total rise from a riser count with optional odd first/last risers (cm in,
+// cm out) - how floor-to-floor height is derived from a staircase.
+export function stairRise(n, riser, first = null, last = null) {
+  if (!(n >= 1) || !(riser > 0)) return null;
+  const b = first > 0 ? first : riser;
+  const t = last > 0 ? last : riser;
+  if (n === 1) return b;
+  if (n === 2) return b + t;
+  return b + (n - 2) * riser + t;
+}
 
 // Steps in a flight from its total rise, aiming for ~18 cm risers.
 export function stairSteps(rise) {

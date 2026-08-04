@@ -8,7 +8,7 @@ import {
 import { Store } from './state.js';
 import { PlanView } from './plan.js';
 import { View3D } from './view3d.js';
-import { CATEGORIES, PRESETS, WALL_CATEGORIES, categoryColor, stairSteps } from './items.js';
+import { CATEGORIES, PRESETS, WALL_CATEGORIES, categoryColor, stairSteps, stairRise } from './items.js';
 
 const CAM_KEY = 'house-measurer.cam';
 const $ = (id) => document.getElementById(id);
@@ -760,6 +760,57 @@ function renderLog() {
     say(`${name} added and active - tap a ghosted point below, then "stack here" to anchor it`, 'good');
     $('log-sheet').hidden = true;
   });
+
+  // Floor-to-floor is rarely measurable directly - derive it. From the
+  // stairs: riser count x riser height, with odd first/last risers. Or:
+  // ceiling height at the stairwell + the floor build-up you can measure
+  // at the opening's edge.
+  if (store.state.floors.length > 1) {
+    section('floor-to-floor calculator');
+    const num = (id) => {
+      const v = parseFloat($(id)?.value);
+      return isFinite(v) && v > 0 ? v : null;
+    };
+    const riseRow = addRow(
+      `<input id="fc-n" type="number" placeholder="risers" title="number of risers"> x ` +
+      `<input id="fc-r" type="number" placeholder="riser cm" title="typical riser"> ` +
+      `first <input id="fc-b" type="number" placeholder="-" title="odd first riser, if different"> ` +
+      `last <input id="fc-t" type="number" placeholder="-" title="odd last riser, if different"> ` +
+      `<b id="fc-total1" class="log-res"></b>`
+    );
+    const ceilRow = addRow(
+      `<span class="dim">or</span> ceiling <input id="fc-c" type="number" placeholder="cm"> ` +
+      `+ floor build <input id="fc-f" type="number" placeholder="cm"> ` +
+      `<b id="fc-total2" class="log-res"></b>`
+    );
+    const stairTotal = () => stairRise(num('fc-n'), num('fc-r'), num('fc-b'), num('fc-t'));
+    const ceilTotal = () => (num('fc-c') != null && num('fc-f') != null ? num('fc-c') + num('fc-f') : null);
+    const showTotals = () => {
+      $('fc-total1').textContent = stairTotal() != null ? `= ${stairTotal().toFixed(1)} cm` : '';
+      $('fc-total2').textContent = ceilTotal() != null ? `= ${ceilTotal().toFixed(1)} cm` : '';
+    };
+    for (const el of [...riseRow.querySelectorAll('input'), ...ceilRow.querySelectorAll('input')]) {
+      el.addEventListener('input', showTotals);
+    }
+    const floorOpts = store.state.floors.slice(1)
+      .map((f) => `<option value="${f.id}">${f.name}</option>`).join('');
+    const applyRow = addRow(
+      `<select id="fc-floor">${floorOpts}</select>` +
+      `<button data-act="ap1">set from stairs</button>` +
+      `<button data-act="ap2">set from ceiling</button>`
+    );
+    $('fc-floor').value = store.state.floors.at(-1).id;
+    const apply = (total) => {
+      if (total == null) return say('Fill the calculator fields first', 'warn');
+      const target = store.floor($('fc-floor').value);
+      const i = store.state.floors.findIndex((f) => f.id === target.id);
+      const below = store.state.floors[i - 1];
+      store.setFloorElevation(target.id, below.elevation + total / 100);
+      say(`${target.name} set to ${total.toFixed(1)} cm above ${below.name}`, 'good');
+    };
+    applyRow.querySelector('[data-act="ap1"]').addEventListener('click', () => apply(stairTotal()));
+    applyRow.querySelector('[data-act="ap2"]').addEventListener('click', () => apply(ceilTotal()));
+  }
 
   const hRow = addRow(
     `<span class="log-name">default ceiling for new rooms</span>` +

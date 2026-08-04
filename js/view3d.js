@@ -22,7 +22,7 @@ import { categoryColor, stairSteps } from './items.js';
 import { itemCorners } from './geometry.js';
 import {
   floorMaterial, wallMaterial, groundMaterial, plainMaterial, steelMaterial,
-  glassMaterial, itemMaterials, doorSlabMaterial, frameMaterial,
+  glassMaterial, itemMaterials, doorSlabMaterial, frameMaterial, platformMaterials,
 } from './textures.js';
 
 const WALL_T = 0.09; // rendered wall thickness, metres
@@ -310,6 +310,12 @@ export class View3D {
     if (it.category === 'extraction') return this.buildHood(it);
     if (it.category === 'shelf') return this.buildShelf(it);
     if (it.category === 'stairs') return this.buildStairs(it);
+    if (it.category === 'platform') {
+      return this.shadowed(new THREE.Mesh(
+        this.geo(new THREE.BoxGeometry(it.w, it.h, it.d)),
+        platformMaterials(it.w, it.d)
+      ));
+    }
     return this.buildGenericItem(it);
   }
 

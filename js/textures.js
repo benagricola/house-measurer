@@ -379,3 +379,17 @@ export function doorSlabMaterial(color) {
 export function frameMaterial() {
   return plainMaterial(0xf2efe6, 0.5);
 }
+
+// Raised floor sections: plank top scaled to the platform's real size,
+// timber edges. [+x, -x, top, bottom, +z, -z].
+export function platformMaterials(w, d) {
+  const key = `platform:${Math.round(w * 10)}x${Math.round(d * 10)}`;
+  return memo(key, () => {
+    const top = floorMaterial().map.clone();
+    top.repeat.set(w / 1.4, d / 1.4);
+    top.needsUpdate = true;
+    const topMat = new THREE.MeshStandardMaterial({ map: top, roughness: 0.65, bumpMap: top, bumpScale: 0.35 });
+    const edge = plainMaterial(0x9a8a68, 0.7);
+    return [edge, edge, topMat, edge, edge, edge];
+  });
+}

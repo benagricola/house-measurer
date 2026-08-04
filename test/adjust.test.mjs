@@ -4,6 +4,7 @@ import {
   solve, adjust, solveAdjusted, pointSegDist, itemCorners, pointInItem,
 } from '../js/geometry.js';
 import { Store } from '../js/state.js';
+import { stairRise, stairSteps } from '../js/items.js';
 
 const close = (a, b, eps = 1e-6) => assert.ok(Math.abs(a - b) < eps, `${a} !~ ${b}`);
 
@@ -300,6 +301,17 @@ test('store: v2 state migrates to v3 with floor stamps', () => {
   assert.equal(st.state.points[0].floor, 'f0');
   assert.equal(st.state.walls[0].floor, 'f0');
   assert.equal(st.state.items[0].floor, 'f0');
+});
+
+test('stairRise: odd first/last risers, degenerate counts', () => {
+  assert.equal(stairRise(13, 20), 260);
+  assert.equal(stairRise(13, 20, 24), 264);      // odd bottom step
+  assert.equal(stairRise(13, 20, 24, 17), 261);  // odd top too
+  assert.equal(stairRise(2, 20, 24), 44);
+  assert.equal(stairRise(1, 20, 24), 24);
+  assert.equal(stairRise(null, 20), null);
+  assert.equal(stairRise(13, null), null);
+  assert.equal(stairSteps(2.9), 16);
 });
 
 test('store: importState replaces and is undoable', () => {

@@ -586,6 +586,19 @@ await key('ok');
 st = await state();
 assert(st.walls.length === 2 && st.walls.at(-1).closed, 'upstairs room closed');
 
+// Derive the real floor-to-floor from the staircase: 13 risers of 22 cm
+// with an odd 24 cm bottom step = 288 cm.
+await click('#log-btn');
+await js(`
+  document.getElementById('fc-n').value = 13;
+  document.getElementById('fc-r').value = 22;
+  document.getElementById('fc-b').value = 24;
+`);
+await js(`[...document.querySelectorAll('#log-list [data-act="ap1"]')].at(0).click()`);
+st = await state();
+assert(near(st.floors[1].elevation, 2.88), `stair calculator sets the elevation (${(st.floors[1].elevation * 100).toFixed(1)} cm)`);
+await click('#log-close');
+
 await click('#floor-btn');
 assert((await state()).activeFloor === 'f0', 'floor button cycles back to ground');
 await click('#modebar [data-mode="item"]');
@@ -600,6 +613,20 @@ await js(`
 await click('#if-place-drop');
 st = await state();
 assert(st.items.at(-1).category === 'stairs' && st.items.at(-1).floor === 'f0', 'staircase dropped on ground floor');
+
+// Raised floor section in the corner.
+await click('#modebar [data-mode="item"]');
+await click('#item-new');
+await js(`
+  document.getElementById('if-name').value = 'raised corner';
+  document.getElementById('if-category').value = 'platform';
+  document.getElementById('if-w').value = 180;
+  document.getElementById('if-d').value = 140;
+  document.getElementById('if-h').value = 16;
+`);
+await click('#if-place-drop');
+st = await state();
+assert(st.items.at(-1).category === 'platform' && near(st.items.at(-1).h, 0.16), 'raised floor platform added');
 
 await click('#view3d-btn');
 await sleep(700);
