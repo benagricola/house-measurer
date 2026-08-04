@@ -384,14 +384,17 @@ export class View3D {
         }
         const geo = this.geo(new THREE.ExtrudeGeometry(shape, { depth: WALL_T, bevelEnabled: false }));
         const mesh = this.shadowed(new THREE.Mesh(geo, wallMaterial()));
-        const rn = { x: dir.y, y: -dir.x };
-        mesh.rotation.y = Math.atan2(dir.y, dir.x);
-        mesh.position.set(a.x - rn.x * WALL_T / 2, elev, -(a.y - rn.y * WALL_T / 2));
-        this.group.add(mesh);
-
         const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
         let n = { x: -dir.y, y: dir.x };
         if ((cen.x - mid.x) * n.x + (cen.y - mid.y) * n.y > 0) n = { x: -n.x, y: -n.y };
+        // Laser readings hit the INNER surface, so the measured line IS the
+        // internal face: the slab's thickness grows outward from it.
+        const rn = { x: dir.y, y: -dir.x }; // extrusion direction (local +z)
+        const off = rn.x * n.x + rn.y * n.y > 0 ? 0 : -WALL_T;
+        mesh.rotation.y = Math.atan2(dir.y, dir.x);
+        mesh.position.set(a.x + rn.x * off, elev, -(a.y + rn.y * off));
+        this.group.add(mesh);
+
         this.wallRecs.push({ mesh, mid, n, key, cuttable: wall.closed });
 
         const hasDoor = (openings.get(key) || []).some((it) => it.category === 'door');
@@ -403,8 +406,8 @@ export class View3D {
           skirt.receiveShadow = true;
           const inn = { x: -n.x, y: -n.y };
           skirt.position.set(
-            mid.x + inn.x * (WALL_T / 2 + 0.01), elev + 0.045,
-            -(mid.y + inn.y * (WALL_T / 2 + 0.01))
+            mid.x + inn.x * 0.011, elev + 0.045,
+            -(mid.y + inn.y * 0.011)
           );
           skirt.rotation.y = Math.atan2(dir.y, dir.x);
           this.group.add(skirt);
@@ -469,9 +472,11 @@ export class View3D {
       this.sun.shadow.camera.updateProjectionMatrix();
 
       if (!this._framed) {
-        this.controls.target.set(cx, 0.8 + maxElev * 0.5, -cy);
+        // Wide enough that the corner pins on top of the walls stay
+        // on-screen (and tappable) at the default pose.
+        this.controls.target.set(cx, 0.9 + maxElev * 0.5, -cy);
         this.camera.position.set(
-          cx + span * 1.1, span * 1.15 + maxElev * 0.9, -cy + span * 1.5 + maxElev * 0.4
+          cx + span * 1.3, span * 1.35 + maxElev * 0.9, -cy + span * 1.75 + maxElev * 0.4
         );
         this.controls.update();
         this._framed = true;

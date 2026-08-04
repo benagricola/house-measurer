@@ -737,8 +737,9 @@ function renderLog() {
   section('layers');
   for (const l of store.state.layers) {
     const row = addRow(
-      `<button data-act="vis" class="${l.visible ? 'vis-on' : 'vis-off'}">${l.visible ? 'shown' : 'hidden'}</button>` +
+      `<span class="pill ${l.visible ? 'on' : 'off'}">${l.visible ? 'shown' : 'hidden'}</span>` +
       `<span class="log-name ${store.state.activeLayer === l.id ? 'active-layer' : ''}">${l.name}</span>` +
+      `<button data-act="vis">${l.visible ? 'hide' : 'show'}</button>` +
       `<button data-act="use">${store.state.activeLayer === l.id ? 'active' : 'use'}</button>` +
       (l.id !== 'current' ? `<button data-act="del">x</button>` : '')
     );
@@ -758,9 +759,10 @@ function renderLog() {
   for (const f of store.state.floors) {
     const active = store.state.activeFloor === f.id;
     const row = addRow(
-      `<button data-act="vis" class="${f.visible ? 'vis-on' : 'vis-off'}">${f.visible ? 'shown' : 'hidden'}</button>` +
+      `<span class="pill ${f.visible ? 'on' : 'off'}">${f.visible ? 'shown' : 'hidden'}</span>` +
       `<span class="log-name ${active ? 'active-layer' : ''}">${f.name}</span>` +
       `<input data-act="elev" type="number" value="${Math.round(f.elevation * 100)}"> cm ` +
+      `<button data-act="vis">${f.visible ? 'hide' : 'show'}</button>` +
       `<button data-act="use">${active ? 'active' : 'go'}</button>` +
       (store.state.floors.length > 1 && store.floorEmpty(f.id) ? `<button data-act="del">x</button>` : '')
     );
@@ -1068,10 +1070,26 @@ function renderPlan() {
     const ghost = !onFloor(wall);
     const runs = wall.closed ? [...wall.pts, wall.pts[0]] : wall.pts;
     const active = wall.id === ui.activeWallId;
+    // Measured points are on the inner wall surface: draw the wall band
+    // shifted outward so the line through the points is its inner edge.
+    const solved = wall.pts.map(pos).filter(Boolean);
+    const cen = solved.length ? {
+      x: solved.reduce((s, q) => s + q.x, 0) / solved.length,
+      y: solved.reduce((s, q) => s + q.y, 0) / solved.length,
+    } : null;
     for (let i = 0; i + 1 < runs.length; i++) {
       const a = pos(runs[i]), b = pos(runs[i + 1]);
-      if (a && b) content.segments.push({
-        x1: a.x, y1: a.y, x2: b.x, y2: b.y,
+      if (!a || !b) continue;
+      let ox = 0, oy = 0;
+      if (cen) {
+        const len = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+        let nx = -(b.y - a.y) / len, ny = (b.x - a.x) / len;
+        const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+        if ((cen.x - mx) * nx + (cen.y - my) * ny > 0) { nx = -nx; ny = -ny; }
+        ox = nx * 0.04; oy = ny * 0.04;
+      }
+      content.segments.push({
+        x1: a.x + ox, y1: a.y + oy, x2: b.x + ox, y2: b.y + oy,
         style: ghost ? 'wallGhost' : active ? 'wallActive' : 'wall',
       });
     }
@@ -1271,14 +1289,23 @@ function surveyViz() {
     const p = pos(pt.id);
     if (!p || !floorVisible(pt.floor)) continue;
     const e = elev(pt.floor);
+    // Pins sit on top of the wall the point belongs to: always visible,
+    // easy to tap, and clear of the ceiling dimension rule.
+    let top = null;
+    for (const w of store.state.walls) {
+      if (w.floor === pt.floor && w.pts.includes(pt.id)) {
+        top = Math.max(top ?? 0, e + (w.height || store.state.roomHeight || 2.6));
+      }
+    }
+    const base = top ?? e;
     const refIdx = ui.refs.indexOf(pt.id);
     viz.points.push({
-      id: pt.id, x: p.x, y: p.y, e,
+      id: pt.id, x: p.x, y: p.y, e: base,
       style: pt.fix ? 'point' : 'anchor',
       ref: refIdx >= 0 ? refIdx : null,
       isLast: pt.id === ui.lastId,
     });
-    viz.labels.push({ key: `p${pt.id}`, x: p.x, y: p.y, z: e + 0.52, text: pt.name, cls: 'name' });
+    viz.labels.push({ key: `p${pt.id}`, x: p.x, y: p.y, z: base + 0.55, text: pt.name, cls: 'name' });
   }
   const pv = preview();
   if (pv) {

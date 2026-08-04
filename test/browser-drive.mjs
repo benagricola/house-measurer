@@ -444,8 +444,13 @@ await js(`document.getElementById('new-layer-name').value = 'plan B'`);
 await js(`[...document.querySelectorAll('#log-list [data-act="add"]')].at(0).click()`);
 st = await state();
 assert(st.layers.length === 2 && st.activeLayer !== 'current', 'proposal layer added and active');
-const visLabels = await js(`[...document.querySelectorAll('#log-list [data-act="vis"]')].map(b => b.className)`);
-assert(visLabels.every((c) => /vis-on|vis-off/.test(c)), 'visibility chips use explicit on/off styling');
+const visUi = await js(`(() => {
+  const pills = [...document.querySelectorAll('#log-list .pill')].map(p => p.textContent);
+  const btns = [...document.querySelectorAll('#log-list [data-act="vis"]')].map(b => b.textContent);
+  return { pills, btns };
+})()`);
+assert(visUi.pills.length >= 2 && visUi.pills.every((t) => /shown|hidden/.test(t)), 'status pills show shown/hidden');
+assert(visUi.btns.every((t) => /hide|show/.test(t)), 'visibility buttons are labelled with the action');
 await click('#log-close');
 await click('#modebar [data-mode="item"]');
 await click('#item-new');
@@ -513,8 +518,8 @@ const pin3d = (name) => js(`(() => {
   const v = window.app.view3d;
   const r = document.getElementById('plan3d').getBoundingClientRect();
   const pt = window.app.store.state.points.find(p => p.name === '${name}');
-  const p = window.app.store.solved.pos.get(pt.id);
-  const vec = new v.camera.position.constructor(p.x, 0.3, -p.y);
+  const rec = v.tapTargets.find(t => t.pointId === pt.id);
+  const vec = rec.mesh.position.clone();
   vec.project(v.camera);
   return { x: Math.round(r.left + (vec.x + 1) / 2 * r.width), y: Math.round(r.top + (1 - vec.y) / 2 * r.height) };
 })()`);

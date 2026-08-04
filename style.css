@@ -440,10 +440,17 @@ header button.on, #modebar button.on {
   font-size: 12px;
   color: var(--ink);
 }
-/* Visibility chips stay fully interactive-looking in both states - a
-   "hidden" layer is still a button you can tap to show it again. */
-.log-row button.vis-on { border-color: var(--teal); color: var(--teal); font-weight: 700; }
-.log-row button.vis-off { border-style: dashed; color: var(--muted); }
+/* Visibility = a read-only status pill next to an always-clickable action
+   button ("hide"/"show") - state and control never share one element. */
+.pill {
+  padding: 3px 9px;
+  border-radius: 99px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+.pill.on { background: var(--teal); color: #fff; }
+.pill.off { background: #cfc9ba; color: #55524a; }
 .log-row input {
   border: 1px solid var(--line);
   border-radius: 7px;
