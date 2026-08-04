@@ -321,7 +321,7 @@ function commitPoint(side) {
   if (ui.flow?.kind === 'item-c1' || ui.flow?.kind === 'item-c2') {
     return acceptCorner(side >= 0 ? c.left : c.right);
   }
-  const name = pointName(store.state.points.length);
+  const name = store.nextName();
   // Until this floor's first room is closed, new points chain straight
   // into the wall run - measuring the room IS drawing it.
   const autoWall = !store.hasClosedRoomOn(activeFloor());
@@ -511,10 +511,28 @@ function handleTap(world, screen) {
 
   if (ui.mode === 'move' && !ui.flow) {
     const iid = hitItem(world);
-    ui.selItem = iid;
+    if (iid != null) {
+      ui.selItem = iid;
+      ui.message = null;
+      render();
+      return true;
+    }
+    ui.selItem = null;
+    // No item under the tap: a wall tap opens the wall editor here too.
+    const seg = hitWall(world, screen);
+    if (seg) {
+      const key = `${seg.pa}:${seg.pb}`;
+      const zone = seg.t < 0.3 ? 'a' : seg.t > 0.7 ? 'b' : 'mid';
+      const names = `${store.point(seg.pa)?.name}-${store.point(seg.pb)?.name}`;
+      const zoneTxt = zone === 'mid' ? 'whole top edge'
+        : `height at the ${store.point(zone === 'a' ? seg.pa : seg.pb)?.name} end only`;
+      startFlow({ kind: 'wall-edit', wallId: seg.wallId, key, zone, pa: seg.pa, pb: seg.pb },
+        `Wall ${names}: thickness, then height (${zoneTxt}). Empty keeps current.`);
+      return true;
+    }
     ui.message = null;
     render();
-    return iid != null;
+    return false;
   }
 
   if (ui.flow?.kind === 'item-side') {
@@ -946,7 +964,7 @@ function importFromText(text) {
 // --- rendering -------------------------------------------------------------
 
 function fieldLabel(i) {
-  if (anchorMode()) return 'distance A to B';
+  if (anchorMode()) return 'first wall: A to B';
   if (ui.flow?.kind === 'item-walloffset') {
     return i === 0 ? `from ${store.point(ui.flow.wall[ui.flow.endIdx === 0 ? 'pa' : 'pb'])?.name ?? 'end'} to edge` : '';
   }
@@ -1013,6 +1031,7 @@ function renderPanel() {
     }
     $('check-btn').style.display = ui.refs.length === 2 && !ui.flow && !offFloorRefs().length ? '' : 'none';
     $('stack-btn').style.display = !ui.flow && offFloorRefs().length ? '' : 'none';
+    $('del-point').style.display = ui.mode === 'measure' && !ui.flow && ui.refs.length === 1 ? '' : 'none';
   }
   // "close room" appears while a wall run with 3+ points is waiting.
   const open = store.openWall();
@@ -1064,7 +1083,7 @@ function renderPanel() {
   // Status line.
   let msg = ui.message;
   if (!msg) {
-    if (anchor) msg = { text: 'Measure your two anchor marks and type the distance', cls: '' };
+    if (anchor) msg = { text: 'Measure your first wall: tape its two ends (A and B, corners are ideal), type the distance', cls: '' };
     else if (ui.mode === 'wall') msg = { text: ui.activeWallId ? 'Tap the next point (first point again closes)' : 'Tap points in order to draw a wall, or tap a wall to set its thickness', cls: '' };
     else if (ui.mode === 'move') msg = { text: ui.selItem ? 'Drag to move, handle rotates, flip = 90 degrees' : 'Tap an item to select it', cls: '' };
     else if (ui.mode === 'item') msg = { text: 'Tap an item to edit it, or add a new one', cls: '' };
@@ -1109,10 +1128,14 @@ function renderPlan() {
     content.points.push({ x: 0, y: 0, style: 'anchor' });
     content.labels.push({ key: 'pA', x: 0, y: 0, text: 'A', cls: 'name', dy: -18 });
     if (d != null) {
+      // The first measurement IS the first wall - preview it as one.
       content.ghosts.push({ x: d, y: 0, primary: true });
-      content.segments.push({ x1: 0, y1: 0, x2: d, y2: 0, style: 'ab' });
+      content.segments.push({
+        x1: 0, y1: 0, x2: d, y2: 0, style: 'wall',
+        t: store.state.wallThickness ?? 0.09,
+      });
       content.labels.push({ key: 'pB', x: d, y: 0, text: 'B', cls: 'name', dy: -18 });
-      content.labels.push({ key: 'dAB', x: d / 2, y: 0, text: fmtDist(d), cls: 'ray', dy: 14 });
+      content.labels.push({ key: 'dAB', x: d / 2, y: 0, text: `first wall ${fmtDist(d)}`, cls: 'ray', dy: 16 });
       plan.fitAll([{ x: 0, y: 0 }, { x: d, y: 0 }]);
     }
     plan.update(content);
@@ -1376,7 +1399,7 @@ function surveyViz() {
     if (pv.d1 != null) viz.circles.push({ cx: r1.x, cy: r1.y, r: pv.d1, e: activeE });
     if (pv.d2 != null) viz.circles.push({ cx: r2.x, cy: r2.y, r: pv.d2, e: activeE });
     if (pv.cands && pv.cands.gap <= CLAMP_TOL) {
-      const name = pointName(store.state.points.length);
+      const name = store.nextName();
       for (const [side, p] of [[+1, pv.cands.left], [-1, pv.cands.right]]) {
         const primary = side === (ui.flow ? ui.flowSide : 1);
         viz.ghosts.push({ x: p.x, y: p.y, e: activeE, side, primary });
@@ -1510,6 +1533,21 @@ $('show-work').addEventListener('click', () => {
 
 $('check-btn').addEventListener('click', commitCheck);
 $('stack-btn').addEventListener('click', stackRefs);
+$('del-point').addEventListener('click', () => {
+  const id = ui.refs[0];
+  const pt = id != null && store.point(id);
+  if (!pt) return;
+  const deps = store.pointDependents(id);
+  if (deps.length && ui.delArm !== id) {
+    ui.delArm = id;
+    return say(`${pt.name} fixes ${deps.map((d) => d.name).join(', ')} - deleting it leaves them unsolved. Tap delete again to proceed.`, 'err');
+  }
+  ui.delArm = null;
+  const name = pt.name;
+  store.deletePoint(id);
+  ui.refs = [];
+  say(`${name} deleted (undo brings it back)`, 'good');
+});
 $('floor-btn').addEventListener('click', () => {
   const floors = store.state.floors;
   const i = floors.findIndex((f) => f.id === activeFloor());

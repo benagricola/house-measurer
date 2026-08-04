@@ -121,8 +121,13 @@ the ? help panel and needs a second confirming tap.
 Static files, native ES modules, no build. Serve the directory over HTTP
 (module imports do not work from file://):
 
-    python3 -m http.server 8017
+    ./serve.py          # http.server + no-cache headers, port 8017
     # open http://localhost:8017
+
+Use serve.py rather than plain `python3 -m http.server`: without no-cache
+headers the browser caches the ES modules on heuristic freshness and code
+changes appear to "not take" until a hard reload. (GitHub Pages sends
+proper validators, so production does not have this problem.)
 
 Tests (pure geometry, least-squares and store logic, no browser needed):
 

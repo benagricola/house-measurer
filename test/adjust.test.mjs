@@ -324,6 +324,31 @@ test('store: per-segment wall thickness and sloped heights', () => {
   assert.equal(st.wall(w.id).thick, undefined);
 });
 
+test('store: deletePoint cleans up; freed names are reused, never duplicated', () => {
+  const st = new Store(memStorage());
+  const { a, b } = st.setAnchors(4);
+  const c = st.addPoint(a, b, 3, 5, 1, { autoWall: true });
+  st.closeWall(st.state.walls[0].id);
+
+  assert.equal(st.pointDependents(c).length, 0);
+  st.deletePoint(c);
+  assert.equal(st.state.points.length, 2);
+  assert.equal(st.state.measurements.length, 1, 'its measurements went too');
+  assert.deepEqual(st.state.walls[0].pts, [a, b]);
+  assert.equal(st.state.walls[0].closed, false, 'loop below 3 points re-opens');
+
+  const d = st.addPoint(a, b, 2, 3, 1);
+  assert.equal(st.point(d).name, 'C', 'freed name reused - no duplicate letters');
+
+  const e = st.addPoint(a, b, 3, 5, 1);
+  const f = st.addPoint(a, e, 2, 2, 1);
+  assert.deepEqual(st.pointDependents(e).map((p) => p.id), [f]);
+  st.deletePoint(e);
+  assert.ok(st.solved.errors.has(f), 'dependent left unsolved, not silently moved');
+  st.undo();
+  assert.ok(!st.solved.errors.has(f));
+});
+
 test('stairRise: odd first/last risers, degenerate counts', () => {
   assert.equal(stairRise(13, 20), 260);
   assert.equal(stairRise(13, 20, 24), 264);      // odd bottom step

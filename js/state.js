@@ -123,6 +123,41 @@ export class Store {
   get canRedo() { return this.redoStack.length > 0; }
 
   point(id) { return this.state.points.find((p) => p.id === id); }
+
+  // First unused letter name - deletions free names without ever colliding.
+  nextName() {
+    const used = new Set(this.state.points.map((p) => p.name));
+    for (let i = 0; ; i++) {
+      const n = pointName(i);
+      if (!used.has(n)) return n;
+    }
+  }
+
+  // Points fixed from this one (two-distance refs or stacks) - they become
+  // unsolvable if it goes.
+  pointDependents(id) {
+    return this.state.points.filter(
+      (p) => p.fix && (p.fix.r1 === id || p.fix.r2 === id || p.fix.stack === id)
+    );
+  }
+
+  // Remove a point, its measurements and its wall links; a closed loop
+  // dropping below 3 points re-opens. Dependent points are kept (they show
+  // as unsolved) so a mistaken delete is a plain undo away.
+  deletePoint(id) {
+    this.commit((s) => {
+      s.points = s.points.filter((p) => p.id !== id);
+      s.measurements = s.measurements.filter((m) => m.p !== id && m.q !== id);
+      for (const w of s.walls) {
+        const i = w.pts.indexOf(id);
+        if (i >= 0) {
+          w.pts.splice(i, 1);
+          if (w.closed && w.pts.length < 3) w.closed = false;
+        }
+      }
+      s.walls = s.walls.filter((w) => w.pts.length > 0);
+    });
+  }
   item(id) { return this.state.items.find((i) => i.id === id); }
   wall(id) { return this.state.walls.find((w) => w.id === id); }
   measurement(id) { return this.state.measurements.find((m) => m.id === id); }
@@ -163,7 +198,7 @@ export class Store {
   addPoint(r1, r2, d1, d2, side, { autoWall = false } = {}) {
     const id = this.nextId++, m1 = this.nextId++, m2 = this.nextId++;
     this.commit((s) => {
-      s.points.push({ id, name: pointName(s.points.length), fix: { r1, r2, side }, floor: s.activeFloor });
+      s.points.push({ id, name: this.nextName(), fix: { r1, r2, side }, floor: s.activeFloor });
       s.measurements.push({ id: m1, p: r1, q: id, d: d1 });
       s.measurements.push({ id: m2, p: r2, q: id, d: d2 });
       if (autoWall) this._autoWallAppend(s, id);
@@ -176,7 +211,7 @@ export class Store {
   addStackedPoint(refId, { autoWall = false } = {}) {
     const id = this.nextId++;
     this.commit((s) => {
-      s.points.push({ id, name: pointName(s.points.length), fix: { stack: refId }, floor: s.activeFloor });
+      s.points.push({ id, name: this.nextName(), fix: { stack: refId }, floor: s.activeFloor });
       if (autoWall) this._autoWallAppend(s, id);
     });
     return id;

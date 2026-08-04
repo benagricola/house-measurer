@@ -397,6 +397,15 @@ iv2 = await itemVp('fridge');
 assert(near(iv2.wx, iv.wx, 1e-9), 'locked item does not move (drag pans instead)');
 await click('#fit');
 
+// In move mode, tapping a bare wall opens the wall editor too.
+await settleFrame();
+const vpm = await viewpos();
+await tapAtRaw(Math.round((vpm.B.x + vpm.C.x) / 2), Math.round((vpm.B.y + vpm.C.y) / 2));
+assert(await js('window.app.ui.flow?.kind') === 'wall-edit', 'move-mode wall tap opens the wall editor');
+await key('ok');
+await key('ok'); // both fields empty: wall unchanged, flow ends
+assert(await js('window.app.ui.flow') === null, 'empty edit leaves the wall untouched');
+
 // Worktop by two distances to its corner, from A and B.
 await click('#modebar [data-mode="item"]');
 await click('#item-new');
@@ -650,6 +659,18 @@ await click('#close-room');
 await key('ok');
 st = await state();
 assert(st.walls.length === 2 && st.walls.at(-1).closed, 'upstairs room closed');
+
+// Delete a mistaken point straight from the entry interface.
+await js('window.app.ui.refs = []; window.app.render();');
+await tapPoint('G');
+assert(await js(`document.getElementById('del-point').style.display`) !== 'none', 'delete offered for a single selected point');
+await click('#del-point');
+st = await state();
+assert(st.points.length === 6, 'point deleted in one tap (no dependents)');
+assert(!st.walls.at(-1).closed && st.walls.at(-1).pts.length === 2, 'its wall link removed, loop re-opened');
+await click('#undo');
+st = await state();
+assert(st.points.length === 7 && st.walls.at(-1).closed, 'undo restores point, link and closure');
 
 // Derive the real floor-to-floor from the staircase: 13 risers of 22 cm
 // with an odd 24 cm bottom step = 288 cm.

@@ -351,6 +351,7 @@ header button.on, #modebar button.on {
 #movebar button:disabled { opacity: 0.4; }
 #check-btn { padding: 5px 12px; font-size: 13px; color: var(--teal); border-color: var(--teal); }
 #stack-btn { padding: 5px 12px; font-size: 13px; color: var(--amber); border-color: var(--amber); font-weight: 700; }
+#del-point { padding: 5px 12px; font-size: 13px; color: var(--red); border-color: var(--red); }
 #floor-btn {
   flex: 0 0 auto !important;
   color: #fff !important;
