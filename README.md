@@ -22,6 +22,14 @@ client-side, state in localStorage, no build step.
    room; each closed loop keeps its own). A wrong chain link is fixed in
    walls mode with step back. After the first room, new points are
    unspecified and walls are drawn explicitly.
+   When the anchors fall out of sight partway round (an L-shaped room, a
+   chimney breast), pause the auto-chain with **walling: on/paused**,
+   place reference-only points where you can see both anchors, resume,
+   and carry on measuring corners from the new references. A point that
+   mistakenly joined the outline is fixed by selecting it and pressing
+   **unwall**: the loop reroutes past it and the point survives as a
+   reference. Deleting a measurement that a point's fix depends on warns
+   first and names every point it would unsolve.
 4. Redundancy: select two existing points, type the measured distance,
    press **record**. All positions are least-squares adjusted over every
    measurement; residuals show per point on the plan and per measurement in

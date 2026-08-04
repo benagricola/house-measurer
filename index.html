@@ -53,6 +53,8 @@
         <button id="check-btn" title="record the typed distance between the two selected points">record</button>
         <button id="stack-btn" style="display:none" title="pin the selected point(s) onto this floor, directly above">stack here</button>
         <button id="del-point" style="display:none" title="delete the selected point">delete</button>
+        <button id="unwall-btn" style="display:none" title="take this point out of the wall outline (it stays as a reference)">unwall</button>
+        <button id="pause-btn" style="display:none" title="pause wall auto-chaining to place reference-only points"></button>
         <button id="auto-btn" style="display:none" title="laser auto mode: readings advance and commit points by themselves"></button>
       </div>
       <div id="fields">
@@ -128,6 +130,7 @@
       <li>Mark two anchor points A and B (ideally corners) with tape. Measure A to B and type it in.</li>
       <li>For every new point: tap 2 already-fixed points, type the measured distance to each, press OK. Two positions match - the marked one is placed; tap the other candidate or press flip if it is on the wrong side.</li>
       <li>Until your first room is closed, each new point chains into the wall outline automatically - measure the corners in order round the room, then press <b>close room</b> and give the ceiling height. Fix a wrong link in walls mode with step back.</li>
+      <li>When A and B fall out of sight, place extra reference points first: press <b>walling: on</b> to pause the auto-chain, fix the reference points, resume, and continue the outline from the new references. If a reference already slipped into the outline, select it and press <b>unwall</b> - the loop reroutes past it and the point stays usable.</li>
       <li>Extra check measurements (e.g. a room diagonal): select the 2 points, type the distance, press record. Every point is adjusted to best fit all measurements; disagreement shows as residuals, and a reading far off the current solution is challenged before it is accepted. Edit or delete any measurement in the data sheet. The <b>detail</b> button overlays the interior angle at every wall corner and, for a selected point, the circles it was fixed from; while typing a new point the proposed wall's corner angle previews live.</li>
     </ol>
     <h2>walls, items, 3D</h2>

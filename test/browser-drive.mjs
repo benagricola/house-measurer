@@ -310,8 +310,19 @@ assert(near(st.walls[0].segH['1:2'][0], 2.4) && near(st.walls[0].segH['1:2'][1],
 await click('#undo'); // back to uniform 120 for later shots
 assert(near((await state()).walls[0].segH['1:2'][0], 1.2), 'undo restores the slope edit');
 
-// --- check measurement + residuals + data sheet -----------------------------
+// Unwall: a reference-only point leaves the outline but keeps existing.
 await click('#modebar [data-mode="measure"]');
+await js('window.app.ui.refs = []; window.app.render();');
+await tapPoint('D');
+assert(await js(`document.getElementById('unwall-btn').style.display`) !== 'none', 'unwall offered for a wall point');
+await click('#unwall-btn');
+st = await state();
+assert(st.walls[0].pts.length === 3 && st.walls[0].closed, 'unwall reroutes the closed loop past the point');
+assert(st.points.length === 4, 'the point itself survives');
+await click('#undo');
+assert((await state()).walls[0].pts.length === 4, 'undo restores the outline');
+
+// --- check measurement + residuals + data sheet -----------------------------
 await js('window.app.ui.refs = []; window.app.render();');
 await tapPoint('A');
 await tapPoint('D');
@@ -350,6 +361,26 @@ await keys(['3', '0', '0']);
 await key('ok');
 st = await state();
 assert(near(st.measurements.at(-1).d, 3.0), 'measurement edited via data sheet + keypad');
+
+// Deleting a load-bearing measurement requires an explicit second press.
+await click('#log-btn');
+await js(`[...document.querySelectorAll('#log-list [data-act="del"]')].at(1).click()`);
+st = await state();
+assert(st.measurements.length === 6, 'fix measurement held back on first press');
+const delWarn = await js(`document.getElementById('status').textContent`);
+assert(/fixes C/.test(delWarn) && /unsolved/.test(delWarn), `deletion warning names the cascade (${delWarn.slice(0, 50)}...)`);
+await js(`[...document.querySelectorAll('#log-list [data-act="del"]')].at(1).click()`);
+st = await state();
+assert(st.measurements.length === 5, 'second press deletes it');
+await click('#undo');
+assert((await state()).measurements.length === 6, 'undo restores the fix measurement');
+await click('#log-close');
+// The transient unsolve pruned D from the refs; re-select for the next test.
+await js(`(() => {
+  const app = window.app, pts = app.store.state.points;
+  app.ui.refs = [pts[0].id, pts[3].id];
+  app.render();
+})()`);
 
 // A wildly-off check is challenged before it can poison the survey.
 await keys(['5', '0', '0']); // 5 m against the true 3.00 m
@@ -687,6 +718,19 @@ const twinGap = await js(`(() => {
 assert(twinGap < 1e-9, 'stacked twins share their owner plan coordinates');
 refs = await js('window.app.ui.refs.map(id => window.app.store.point(id).name)');
 assert(refs.join(',') === `${twins[0].name},${twins[1].name}`, `refs swapped to the twins (${refs})`);
+
+// Walling pause: a reference-only point commits without joining the run.
+await click('#pause-btn');
+await keys(['4', '2', '7']);
+await key('ok');
+await keys(['2', '5', '0']);
+await key('ok');
+st = await state();
+assert(st.points.length === 7, 'paused commit still places the point');
+assert(st.walls.at(-1).pts.length === 2, 'paused point stays out of the wall run');
+await click('#undo');
+await click('#pause-btn'); // resume walling
+assert((await state()).points.length === 6, 'reference point undone for the walled retry');
 
 await keys(['4', '2', '7']);
 await key('ok');

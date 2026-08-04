@@ -337,8 +337,9 @@ function commitPoint(side) {
   }
   const name = store.nextName();
   // Until this floor's first room is closed, new points chain straight
-  // into the wall run - measuring the room IS drawing it.
-  const autoWall = !store.hasClosedRoomOn(activeFloor());
+  // into the wall run - measuring the room IS drawing it. The pause
+  // toggle exempts reference-only points (marks you cannot see A/B from).
+  const autoWall = !store.hasClosedRoomOn(activeFloor()) && ui.wallPause !== true;
   ui.lastId = store.addPoint(ui.refs[0], ui.refs[1], d1, d2, side, { autoWall });
   ui.fields = ['', ''];
   ui.active = 0;
@@ -355,7 +356,7 @@ function commitPoint(side) {
 function stackRefs() {
   const off = offFloorRefs();
   if (!off.length) return;
-  const autoWall = !store.hasClosedRoomOn(activeFloor());
+  const autoWall = !store.hasClosedRoomOn(activeFloor()) && ui.wallPause !== true;
   const made = [];
   for (const id of off) {
     const nid = store.addStackedPoint(id, { autoWall });
@@ -768,7 +769,18 @@ function renderLog() {
       startFlow({ kind: 'edit-meas', measId: m.id },
         `Editing ${a} to ${b} (was ${fmtDist(m.d)}) - type the new value, OK saves`);
     });
-    row.querySelector('[data-act="del"]').addEventListener('click', () => { store.deleteMeasurement(m.id); });
+    row.querySelector('[data-act="del"]').addEventListener('click', () => {
+      // Deleting a measurement a fix depends on unsolves points; make the
+      // cascade explicit and require a second press.
+      const load = store.measurementLoad(m.id);
+      if (load.length && ui.measArm !== m.id) {
+        ui.measArm = m.id;
+        say(`${a} to ${b} fixes ${load.map((p) => p.name).join(', ')} - deleting it leaves them (and anything measured from them) unsolved. Press x again to delete anyway.`, 'err');
+        return;
+      }
+      ui.measArm = null;
+      store.deleteMeasurement(m.id);
+    });
   }
 
   section('walls and rooms');
@@ -1045,6 +1057,13 @@ function renderPanel() {
     $('check-btn').style.display = ui.refs.length === 2 && !ui.flow && !offFloorRefs().length ? '' : 'none';
     $('stack-btn').style.display = !ui.flow && offFloorRefs().length ? '' : 'none';
     $('del-point').style.display = ui.mode === 'measure' && !ui.flow && ui.refs.length === 1 ? '' : 'none';
+    const selPt = ui.refs.length === 1 ? ui.refs[0] : null;
+    const inWall = selPt != null && store.state.walls.some((w) => w.pts.includes(selPt));
+    $('unwall-btn').style.display = ui.mode === 'measure' && !ui.flow && inWall ? '' : 'none';
+    const autoWalling = !anchorMode() && !store.hasClosedRoomOn(activeFloor());
+    $('pause-btn').style.display = ui.mode === 'measure' && !ui.flow && autoWalling ? '' : 'none';
+    $('pause-btn').textContent = ui.wallPause ? 'walling: paused' : 'walling: on';
+    $('pause-btn').classList.toggle('on', !ui.wallPause);
     $('auto-btn').style.display = laser.connected && ui.mode === 'measure' && !ui.flow ? '' : 'none';
     $('auto-btn').textContent = `auto: ${ui.autoLaser === true ? 'on' : 'off'}`;
     $('auto-btn').classList.toggle('on', ui.autoLaser === true);
@@ -1651,6 +1670,19 @@ $('show-work').addEventListener('click', () => {
 
 $('check-btn').addEventListener('click', commitCheck);
 $('stack-btn').addEventListener('click', stackRefs);
+$('unwall-btn').addEventListener('click', () => {
+  const id = ui.refs[0];
+  const pt = id != null && store.point(id);
+  if (!pt) return;
+  store.detachPointFromWalls(id);
+  say(`${pt.name} taken out of the wall outline - it stays as a reference point`, 'good');
+});
+$('pause-btn').addEventListener('click', () => {
+  ui.wallPause = !ui.wallPause;
+  say(ui.wallPause
+    ? 'Walling paused: new points are reference-only until you resume'
+    : 'Walling resumed: new points chain into the outline again');
+});
 $('auto-btn').addEventListener('click', () => {
   ui.autoLaser = ui.autoLaser !== true;
   say(ui.autoLaser

@@ -141,6 +141,51 @@ export class Store {
     );
   }
 
+  // Take a point out of every wall polyline WITHOUT deleting it - for
+  // points that were only ever references, not corners. Closed loops stay
+  // closed while they keep 3+ points (the outline simply reroutes).
+  detachPointFromWalls(id) {
+    this.commit((s) => {
+      for (const w of s.walls) {
+        const i = w.pts.indexOf(id);
+        if (i >= 0) {
+          w.pts.splice(i, 1);
+          if (w.closed && w.pts.length < 3) w.closed = false;
+        }
+      }
+      s.walls = s.walls.filter((w) => w.pts.length > 0);
+    });
+  }
+
+  // The measurements a point's fix depends on - deleting one unsolves the
+  // point and everything chained from it.
+  fixMeasurementIds(pt) {
+    if (!pt?.fix || pt.fix.stack != null) return [];
+    return this.state.measurements
+      .filter((m) =>
+        (m.p === pt.id && (m.q === pt.fix.r1 || m.q === pt.fix.r2)) ||
+        (m.q === pt.id && (m.p === pt.fix.r1 || m.p === pt.fix.r2)))
+      .map((m) => m.id);
+  }
+
+  // Points whose fix would lose a measurement if this one were deleted
+  // (only counting the FIRST matching measurement per pair - a duplicate
+  // re-measurement makes the original safe to drop).
+  measurementLoad(measId) {
+    const m = this.measurement(measId);
+    if (!m) return [];
+    const twin = this.state.measurements.find((o) => o.id !== measId
+      && ((o.p === m.p && o.q === m.q) || (o.p === m.q && o.q === m.p)));
+    if (twin) return []; // a duplicate covers the same pair
+    const load = this.state.points.filter((pt) => this.fixMeasurementIds(pt).includes(measId));
+    // The anchor baseline: the first A-B measurement positions point B.
+    const [pa, pb] = this.state.points;
+    if (pa && pb && ((m.p === pa.id && m.q === pb.id) || (m.p === pb.id && m.q === pa.id))) {
+      if (!load.includes(pb)) load.push(pb);
+    }
+    return load;
+  }
+
   // Remove a point, its measurements and its wall links; a closed loop
   // dropping below 3 points re-opens. Dependent points are kept (they show
   // as unsolved) so a mistaken delete is a plain undo away.

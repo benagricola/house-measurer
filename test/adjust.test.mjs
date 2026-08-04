@@ -350,6 +350,32 @@ test('store: deletePoint cleans up; freed names are reused, never duplicated', (
   assert.ok(!st.solved.errors.has(f));
 });
 
+test('store: detachPointFromWalls and load-bearing measurement analysis', () => {
+  const st = new Store(memStorage());
+  const { a, b } = st.setAnchors(4);
+  const c = st.addPoint(a, b, 3, 5, 1, { autoWall: true });
+  const d = st.addPoint(a, b, 2, 3.4, 1, { autoWall: true });
+  st.closeWall(st.state.walls[0].id);
+
+  // Detach keeps the point and the loop (4 -> 3 points stays closed).
+  st.detachPointFromWalls(d);
+  assert.deepEqual(st.state.walls[0].pts, [a, b, c]);
+  assert.equal(st.state.walls[0].closed, true);
+  assert.ok(st.point(d), 'point survives as a reference');
+  st.detachPointFromWalls(c);
+  assert.equal(st.state.walls[0].closed, false, 'below 3 the loop opens');
+
+  // Load analysis: fix measurements carry their point (and its chain).
+  const mAC = st.state.measurements.find((m) => m.p === a && m.q === c);
+  assert.deepEqual(st.measurementLoad(mAC.id).map((p) => p.id), [c]);
+  // The anchor baseline carries B.
+  const mAB = st.state.measurements.find((m) => m.p === a && m.q === b);
+  assert.ok(st.measurementLoad(mAB.id).some((p) => p.id === b));
+  // A duplicate of the same pair makes the original safe to delete.
+  st.addMeasurement(a, c, 3.001);
+  assert.equal(st.measurementLoad(mAC.id).length, 0);
+});
+
 test('angles: between segments and interior angles with reflex corners', () => {
   close(angleDeg({ x: -1, y: 0 }, { x: 0, y: 0 }, { x: 0, y: 1 }), 90);
   close(angleDeg({ x: -1, y: 0 }, { x: 0, y: 0 }, { x: 1, y: 1 }), 135);
