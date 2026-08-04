@@ -303,14 +303,21 @@ test('store: v2 state migrates to v3 with floor stamps', () => {
   assert.equal(st.state.items[0].floor, 'f0');
 });
 
-test('store: wall thickness per segment + default', () => {
+test('store: per-segment wall thickness and sloped heights', () => {
   const st = new Store(memStorage());
   const { a, b } = st.setAnchors(4);
   const w = st.openWall();
-  st.setWallThickness(w.id, `${a}:${b}`, 0.55);
-  assert.equal(st.wall(w.id).thick[`${a}:${b}`], 0.55);
+  const key = `${a}:${b}`;
+  st.setWallSeg(w.id, key, { t: 0.55, h1: 1.2, h2: 1.2 });
+  assert.equal(st.wall(w.id).thick[key], 0.55);
+  assert.deepEqual(st.wall(w.id).segH[key], [1.2, 1.2]);
+  // Raise one end only: the other keeps its value.
+  st.setWallSeg(w.id, key, { h1: 2.4 });
+  assert.deepEqual(st.wall(w.id).segH[key], [2.4, 1.2]);
+  assert.equal(st.wall(w.id).thick[key], 0.55, 'thickness untouched');
   st.setDefaultWallThickness(0.12);
   assert.equal(st.state.wallThickness, 0.12);
+  st.undo();
   st.undo();
   st.undo();
   assert.equal(st.state.wallThickness, 0.09);

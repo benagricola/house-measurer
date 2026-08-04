@@ -440,10 +440,24 @@ function pressOk() {
     const h = store.wall(wallId)?.height || store.state.roomHeight || 2.6;
     return endFlow(`Ceiling ${Math.round(h * 100)} cm for this room`, 'good');
   }
-  if (ui.flow?.kind === 'wall-thickness') {
-    const v = parseDistance(ui.fields[0]);
-    if (v != null) store.setWallThickness(ui.flow.wallId, ui.flow.key, v);
-    return endFlow(v != null ? `Wall thickness ${Math.round(v * 100)} cm` : null, 'good');
+  if (ui.flow?.kind === 'wall-edit') {
+    if (ui.active === 0) {
+      ui.active = 1;
+      return render();
+    }
+    const t = parseDistance(ui.fields[0]);
+    const hv = parseDistance(ui.fields[1]);
+    if (t == null && hv == null) return endFlow('Wall unchanged');
+    const patch = { t };
+    if (hv != null) {
+      if (ui.flow.zone !== 'b') patch.h1 = hv;
+      if (ui.flow.zone !== 'a') patch.h2 = hv;
+    }
+    store.setWallSeg(ui.flow.wallId, ui.flow.key, patch);
+    const bits = [];
+    if (t != null) bits.push(`thickness ${Math.round(t * 100)} cm`);
+    if (hv != null) bits.push(`height ${Math.round(hv * 100)} cm`);
+    return endFlow(`Wall updated: ${bits.join(', ')}`, 'good');
   }
   if (ui.flow?.kind === 'item-c2' && parseDistance(ui.fields[0]) == null && parseDistance(ui.fields[1]) == null) {
     // Keep the item's own width, axis-aligned; rotate/drag later.
@@ -478,13 +492,18 @@ function handleTap(world, screen) {
       else say('Wall: tap the next point (first point again closes)');
       return true;
     }
-    // Tap on a wall segment: set that segment's thickness.
+    // Tap on a wall segment: edit its thickness and height. Tapping near an
+    // end edits the height at that end only (sloped ceilings); the middle
+    // sets both ends.
     const seg = hitWall(world, screen);
     if (seg) {
       const key = `${seg.pa}:${seg.pb}`;
-      const cur = store.wall(seg.wallId)?.thick?.[key] ?? store.state.wallThickness ?? 0.09;
-      startFlow({ kind: 'wall-thickness', wallId: seg.wallId, key },
-        `Thickness of wall ${store.point(seg.pa)?.name}-${store.point(seg.pb)?.name} in cm (now ${Math.round(cur * 100)})`);
+      const zone = seg.t < 0.3 ? 'a' : seg.t > 0.7 ? 'b' : 'mid';
+      const names = `${store.point(seg.pa)?.name}-${store.point(seg.pb)?.name}`;
+      const zoneTxt = zone === 'mid' ? 'whole top edge'
+        : `height at the ${store.point(zone === 'a' ? seg.pa : seg.pb)?.name} end only`;
+      startFlow({ kind: 'wall-edit', wallId: seg.wallId, key, zone, pa: seg.pa, pb: seg.pb },
+        `Wall ${names}: thickness, then height (${zoneTxt}). Empty keeps current.`);
       return true;
     }
     return false;
@@ -936,7 +955,18 @@ function fieldLabel(i) {
     return i === 0 ? `${store.point(m?.p)?.name ?? '?'} to ${store.point(m?.q)?.name ?? '?'}` : '';
   }
   if (ui.flow?.kind === 'room-height') return i === 0 ? 'ceiling height' : '';
-  if (ui.flow?.kind === 'wall-thickness') return i === 0 ? 'wall thickness' : '';
+  if (ui.flow?.kind === 'wall-edit') {
+    const w = store.wall(ui.flow.wallId);
+    if (i === 0) {
+      const curT = w?.thick?.[ui.flow.key] ?? store.state.wallThickness ?? 0.09;
+      return `thickness (${Math.round(curT * 100)})`;
+    }
+    const roomH = w?.height || store.state.roomHeight || 2.6;
+    const [h1, h2] = w?.segH?.[ui.flow.key] || [roomH, roomH];
+    if (ui.flow.zone === 'a') return `height at ${store.point(ui.flow.pa)?.name} (${Math.round(h1 * 100)})`;
+    if (ui.flow.zone === 'b') return `height at ${store.point(ui.flow.pb)?.name} (${Math.round(h2 * 100)})`;
+    return `height (${Math.round(h1 * 100)}${h1 !== h2 ? '/' + Math.round(h2 * 100) : ''})`;
+  }
   const id = ui.refs[i];
   return id ? `to ${store.point(id).name}` : `to ref ${i + 1}`;
 }
@@ -944,7 +974,7 @@ function fieldLabel(i) {
 function renderPanel() {
   const anchor = anchorMode();
   const oneField = ui.flow?.kind === 'item-walloffset' || ui.flow?.kind === 'edit-meas'
-    || ui.flow?.kind === 'room-height' || ui.flow?.kind === 'wall-thickness';
+    || ui.flow?.kind === 'room-height';
   const noFields = ui.flow?.kind === 'item-side' || ui.flow?.kind === 'item-wallmount';
   const showKeypad = ui.mode === 'measure' || anchor || ui.flow;
   const showFields = showKeypad && !noFields;
@@ -1316,12 +1346,18 @@ function surveyViz() {
     const p = pos(pt.id);
     if (!p || !floorVisible(pt.floor)) continue;
     const e = elev(pt.floor);
-    // Pins sit on top of the wall the point belongs to: always visible,
-    // easy to tap, and clear of the ceiling dimension rule.
+    // Pins sit on top of the wall the point belongs to (using the height at
+    // this end of each adjacent segment, so sloped walls carry their pins
+    // correctly): always visible, easy to tap, clear of the ceiling rule.
     let top = null;
     for (const w of store.state.walls) {
-      if (w.floor === pt.floor && w.pts.includes(pt.id)) {
-        top = Math.max(top ?? 0, e + (w.height || store.state.roomHeight || 2.6));
+      if (w.floor !== pt.floor || !w.pts.includes(pt.id)) continue;
+      const roomH = w.height || store.state.roomHeight || 2.6;
+      const runIds = w.closed && w.pts.length >= 3 ? [...w.pts, w.pts[0]] : w.pts;
+      for (let i = 0; i + 1 < runIds.length; i++) {
+        if (runIds[i] !== pt.id && runIds[i + 1] !== pt.id) continue;
+        const [h1, h2] = w.segH?.[`${runIds[i]}:${runIds[i + 1]}`] || [roomH, roomH];
+        top = Math.max(top ?? 0, e + (runIds[i] === pt.id ? h1 : h2));
       }
     }
     const base = top ?? e;

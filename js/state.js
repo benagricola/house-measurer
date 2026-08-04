@@ -261,14 +261,24 @@ export class Store {
     });
   }
 
-  // Thickness of one wall segment, metres. Keyed by its endpoint ids so the
-  // value survives edits elsewhere in the polyline.
-  setWallThickness(id, segKey, t) {
+  // Per-segment overrides, keyed by endpoint ids so values survive edits
+  // elsewhere in the polyline. t = thickness; h1/h2 = height at the first/
+  // second endpoint (a sloped top edge when they differ). Null leaves a
+  // value unchanged. One undo step for the whole edit.
+  setWallSeg(id, segKey, { t = null, h1 = null, h2 = null } = {}) {
     this.commit((s) => {
       const w = s.walls.find((w) => w.id === id);
       if (!w) return;
-      if (!w.thick) w.thick = {};
-      w.thick[segKey] = t;
+      if (t != null) {
+        if (!w.thick) w.thick = {};
+        w.thick[segKey] = t;
+      }
+      if (h1 != null || h2 != null) {
+        if (!w.segH) w.segH = {};
+        const roomH = w.height || s.roomHeight || 2.6;
+        const cur = w.segH[segKey] || [roomH, roomH];
+        w.segH[segKey] = [h1 ?? cur[0], h2 ?? cur[1]];
+      }
     });
   }
 

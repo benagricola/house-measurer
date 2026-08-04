@@ -271,15 +271,32 @@ await key('ok'); // keep existing height
 st = await state();
 assert(st.walls[0].closed && near(st.walls[0].height, 2.5), 're-closed, height kept');
 
-// Per-segment wall thickness: tap the A-B wall, type 55 (an external stone wall).
+// Tap mid-wall A-B: edit thickness (55, stone) and height (both ends).
 await settleFrame();
-const vpt = await viewpos();
+let vpt = await viewpos();
 await tapAtRaw(Math.round((vpt.A.x + vpt.B.x) / 2), Math.round((vpt.A.y + vpt.B.y) / 2));
-assert(await js('window.app.ui.flow?.kind') === 'wall-thickness', 'wall tap opens the thickness editor');
+assert(await js('window.app.ui.flow?.kind') === 'wall-edit', 'wall tap opens the wall editor');
+assert(await js('window.app.ui.flow?.zone') === 'mid', 'mid tap targets the whole top edge');
 await keys(['5', '5']);
+await key('ok'); // to the height field
+await keys(['1', '2', '0']);
 await key('ok');
 st = await state();
 assert(near(st.walls[0].thick?.['1:2'] ?? 0, 0.55), 'segment thickness stored (55 cm)');
+assert(near(st.walls[0].segH?.['1:2']?.[0] ?? 0, 1.2) && near(st.walls[0].segH['1:2'][1], 1.2), 'uniform height stored');
+
+// Tap near the A end: raise just that end (a sloped top edge).
+await settleFrame();
+vpt = await viewpos();
+await tapAtRaw(Math.round(vpt.A.x * 0.8 + vpt.B.x * 0.2), Math.round(vpt.A.y * 0.8 + vpt.B.y * 0.2));
+assert(await js('window.app.ui.flow?.zone') === 'a', 'end tap targets that end');
+await key('ok'); // keep thickness
+await keys(['2', '4', '0']);
+await key('ok');
+st = await state();
+assert(near(st.walls[0].segH['1:2'][0], 2.4) && near(st.walls[0].segH['1:2'][1], 1.2), 'sloped top edge stored (240/120)');
+await click('#undo'); // back to uniform 120 for later shots
+assert(near((await state()).walls[0].segH['1:2'][0], 1.2), 'undo restores the slope edit');
 
 // --- check measurement + residuals + data sheet -----------------------------
 await click('#modebar [data-mode="measure"]');

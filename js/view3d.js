@@ -368,17 +368,20 @@ export class View3D {
         if (len < 1e-6) continue;
         const dir = { x: (b.x - a.x) / len, y: (b.y - a.y) / len };
         const key = `${wall.id}:${i}`;
-        const segT = wall.thick?.[`${runIds[i]}:${runIds[i + 1]}`]
-          ?? state.wallThickness ?? WALL_T;
+        const segKey = `${runIds[i]}:${runIds[i + 1]}`;
+        const segT = wall.thick?.[segKey] ?? state.wallThickness ?? WALL_T;
+        // Per-end heights: a sloped top edge when they differ (eaves walls,
+        // attic ceilings). Default is the room height.
+        const [sh1, sh2] = wall.segH?.[segKey] || [H, H];
 
         const shape = new THREE.Shape([
           new THREE.Vector2(0, 0), new THREE.Vector2(len, 0),
-          new THREE.Vector2(len, H), new THREE.Vector2(0, H),
+          new THREE.Vector2(len, sh2), new THREE.Vector2(0, sh1),
         ]);
         for (const it of openings.get(key) || []) {
           const s = (it.x - a.x) * dir.x + (it.y - a.y) * dir.y;
           const x0 = Math.max(0.02, s - it.w / 2), x1 = Math.min(len - 0.02, s + it.w / 2);
-          const y0 = Math.max(0, it.z0), y1 = Math.min(H - 0.02, it.z0 + it.h);
+          const y0 = Math.max(0, it.z0), y1 = Math.min(Math.min(sh1, sh2) - 0.02, it.z0 + it.h);
           if (x1 - x0 < 0.05 || y1 - y0 < 0.05) continue;
           shape.holes.push(new THREE.Path([
             new THREE.Vector2(x0, y0), new THREE.Vector2(x1, y0),
