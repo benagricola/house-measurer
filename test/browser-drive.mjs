@@ -636,6 +636,15 @@ const exported = await js('window.app.exportString()');
 assert(JSON.parse(exported).state.items.length === (await state()).items.length, 'export contains items');
 await js(`window.app.store.clearAll()`);
 assert((await state()).points.length === 0, 'cleared');
+
+// Laser auto mode: in the empty state one reading measures the first wall.
+await js('window.app.ui.autoLaser = true; window.app.laser.cb.onMeasurement(3.0)');
+st = await state();
+assert(st.points.length === 2 && near(st.measurements[0].d, 3.0), 'auto laser: anchor reading commits itself');
+assert(st.walls[0]?.pts.length === 2, 'auto laser: first wall started');
+await js('window.app.ui.autoLaser = false; window.app.store.clearAll()');
+assert((await state()).points.length === 0, 're-cleared');
+
 await js(`window.app.importFromText(${JSON.stringify('X')})`);
 assert((await state()).points.length === 0, 'broken import rejected');
 await js(`window.app.importFromText(${JSON.stringify(exported)})`);
@@ -758,6 +767,26 @@ const stairKids = await js(`(() => {
 assert(stairKids >= 14, `3D: staircase rendered as steps (${stairKids})`);
 await shot('13-two-floors');
 await click('#view3d-btn');
+
+// Laser auto mode drives the point loop: two readings = one point.
+await click('#modebar [data-mode="measure"]');
+await js(`(() => {
+  const app = window.app, pts = app.store.state.points;
+  app.ui.refs = [pts[0].id, pts[1].id];
+  app.ui.autoLaser = true;
+  app.render();
+})()`);
+const beforeAuto = await state();
+await js('window.app.laser.cb.onMeasurement(2.0)');
+assert(await js('window.app.ui.fields[0]') === '2.0' && await js('window.app.ui.active') === 1,
+  'auto laser: first reading fills ref-1 and advances');
+await js('window.app.laser.cb.onMeasurement(2.2)');
+st = await state();
+assert(st.points.length === beforeAuto.points.length + 1, 'auto laser: second reading commits the point');
+assert(st.measurements.length === beforeAuto.measurements.length + 2, 'auto laser: both distances recorded');
+await js('window.app.ui.autoLaser = false');
+await click('#undo');
+assert((await state()).points.length === beforeAuto.points.length, 'auto-committed point undoes in one step');
 
 await send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false });
 await sleep(400);

@@ -172,7 +172,25 @@ heuristic decoder (ASCII, float32 metres, uint32 millimetres, with a
 millimetre-resolution gate against false positives). Unrecognised
 meters still connect and their raw frames appear in hex in the data
 sheet's laser section - capture a few readings and use them to add an
-exact decoder for that model.
+exact decoder for that model. The Bosch UniversalDistance 50C is
+supported natively (SIG service 0xFDE8, characteristic 02a6c0d2,
+auto-sync enabled on connect; confirmed against a real device).
+
+### Auto survey mode
+
+With a laser connected, an **auto** toggle appears beside the reference
+slots (off by default). When on, readings drive the survey without
+touching the screen: in anchor state the first reading measures the
+first wall; thereafter each reading pair from the two selected
+references places a point - first reading fills "to ref 1", second
+fills "to ref 2" and commits, auto-chaining the point into the wall run
+until the room is closed. The measuring loop becomes: stand at the
+corner, shoot cross A, shoot cross B, walk to the next corner. All
+normal guards stay active - implausible pairs are refused (fields kept
+for a re-shot), flip corrects a wrong side, the proposed-corner angle
+and residuals flag bad readings, and undo/delete recover from anything.
+Auto only drives plain point fixing; item placement, wall offsets,
+ceiling heights and checks always wait for an explicit OK.
 
 ## Deploying
 

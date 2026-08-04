@@ -1045,6 +1045,9 @@ function renderPanel() {
     $('check-btn').style.display = ui.refs.length === 2 && !ui.flow && !offFloorRefs().length ? '' : 'none';
     $('stack-btn').style.display = !ui.flow && offFloorRefs().length ? '' : 'none';
     $('del-point').style.display = ui.mode === 'measure' && !ui.flow && ui.refs.length === 1 ? '' : 'none';
+    $('auto-btn').style.display = laser.connected && ui.mode === 'measure' && !ui.flow ? '' : 'none';
+    $('auto-btn').textContent = `auto: ${ui.autoLaser === true ? 'on' : 'off'}`;
+    $('auto-btn').classList.toggle('on', ui.autoLaser === true);
   }
   // "close room" appears while a wall run with 3+ points is waiting.
   const open = store.openWall();
@@ -1570,6 +1573,27 @@ const laser = new LaserLink({
   onMeasurement: (m) => {
     const txt = m.toFixed(3).replace(/0+$/, '').replace(/\.$/, '.0');
     ui.fields[ui.active] = txt;
+    const auto = ui.autoLaser === true;
+    // Auto survey loop: each reading advances the flow, each pair commits
+    // a point (which chains into the wall run until the room closes). The
+    // gap guard still refuses impossible pairs, flip still swaps sides,
+    // undo still unwinds - the laser only replaces typing and OK.
+    if (auto && anchorMode()) {
+      say(`Laser: ${fmtDist(m)} for the first wall`, 'good');
+      return commitAnchor();
+    }
+    if (auto && ui.mode === 'measure' && !ui.flow
+      && ui.refs.length === 2 && !offFloorRefs().length) {
+      const d0 = parseDistance(ui.fields[0]);
+      const d1 = parseDistance(ui.fields[1]);
+      if (d0 != null && d1 != null) return commitPoint(ui.flowSide);
+      if (d0 != null) {
+        ui.active = 1;
+        return say(`Laser: ${fmtDist(m)} to ${store.point(ui.refs[0]).name} - now shoot ${store.point(ui.refs[1]).name}`, 'good');
+      }
+      ui.active = 0;
+      return say(`Laser: ${fmtDist(m)} - shoot ${store.point(ui.refs[0]).name} first`, 'good');
+    }
     say(`Laser: ${fmtDist(m)} - OK to commit`, 'good');
   },
   onStatus: (text, cls) => {
@@ -1627,6 +1651,12 @@ $('show-work').addEventListener('click', () => {
 
 $('check-btn').addEventListener('click', commitCheck);
 $('stack-btn').addEventListener('click', stackRefs);
+$('auto-btn').addEventListener('click', () => {
+  ui.autoLaser = ui.autoLaser !== true;
+  say(ui.autoLaser
+    ? 'Auto on: shoot ref 1, shoot ref 2, point placed - repeat around the room'
+    : 'Auto off: laser readings fill the field, you press OK');
+});
 $('del-point').addEventListener('click', () => {
   const id = ui.refs[0];
   const pt = id != null && store.point(id);
@@ -1750,6 +1780,6 @@ render();
 // Debug / test hooks.
 window.app = {
   store, plan, ui, render, pressKey, toggleRef, setMode, toggle3D,
-  openItemForm, applyItemForm, importFromText, exportString,
+  openItemForm, applyItemForm, importFromText, exportString, laser,
   get view3d() { return view3d; },
 };
