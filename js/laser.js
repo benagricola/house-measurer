@@ -76,14 +76,25 @@ export function parseDistoFrame(bytes) {
   return parseFloat32Frame(bytes);
 }
 
-// Bosch GLM family (MT protocol): responses carry the distance as a
-// uint32 LE in 0.05 mm units, typically after a 2-3 byte status/length
-// header (community-documented for GLM 50 C and relatives). Tried before
-// the generic heuristics because those would misread 0.05 mm units.
+// Bosch GLM 50-27 / UniversalDistance 50C generation: after writing the
+// auto-sync enable command (BOSCH_AUTOSYNC), each press of the measure
+// button sends an indication starting c0 55 10 06 with the distance as a
+// float32 LE in METRES at bytes 7..10 (community reverse engineering of
+// the 50-27CG). No mm-resolution gate here: the header identifies the
+// frame, and Bosch's floats are not necessarily whole millimetres.
+export const BOSCH_AUTOSYNC = [0xc0, 0x55, 0x02, 0x01, 0x00, 0x1a];
+
 export function parseBoschFrame(bytes) {
-  if (bytes.length >= 6) {
+  if (bytes.length >= 11 && bytes[0] === 0xc0 && bytes[1] === 0x55 && bytes[2] === 0x10) {
     const dv = new DataView(new Uint8Array(bytes).buffer);
-    for (const o of [2, 3, 4]) {
+    const v = dv.getFloat32(7, true);
+    if (isFinite(v) && v >= PLAUSIBLE_MIN && v <= PLAUSIBLE_MAX) return v;
+  }
+  // Older GLM/PLR models answer measurement REQUESTS with uint32 LE in
+  // 0.05 mm units after a short status header.
+  if (bytes.length >= 6 && bytes[0] !== 0xc0) {
+    const dv = new DataView(new Uint8Array(bytes).buffer);
+    for (const o of [2, 3]) {
       if (o + 4 > bytes.length) continue;
       const raw = dv.getUint32(o, true);
       const metres = raw * 0.05 / 1000;
@@ -173,19 +184,37 @@ export class LaserLink {
         this.status('Laser disconnected', 'warn');
       });
       const server = await this.device.gatt.connect();
-      // Discovery mode: hook every notify characteristic we are allowed to
-      // see; decode with the matching profile parser or the heuristic.
-      let services = [];
-      try { services = await server.getPrimaryServices(); } catch {}
+      // Discovery: getPrimaryServices() alone is flaky on some stacks, so
+      // also probe every candidate service explicitly, with one retry for
+      // the discovery race. Everything found is logged for diagnosis.
+      const found = new Map();
+      for (let attempt = 0; attempt < 2 && found.size === 0; attempt++) {
+        if (attempt) await new Promise((r) => setTimeout(r, 1200));
+        try {
+          for (const s of await server.getPrimaryServices()) found.set(s.uuid, s);
+        } catch {}
+        for (const cand of optionalServices) {
+          try {
+            const s = await server.getPrimaryService(cand);
+            found.set(s.uuid, s);
+          } catch {}
+        }
+      }
+      const svcList = [...found.keys()].map((u) => u.slice(0, 8)).join(', ') || 'none';
+      this.rawLog.push(`services: ${svcList}`);
+      this.cb.onRaw?.('');
+
       let hooked = 0;
       let pokeTarget = null;
-      for (const service of services) {
+      let boschChar = null;
+      for (const service of found.values()) {
         const uuid = service.uuid;
         const profile = PROFILES.find((p) =>
           typeof p.service === 'string' ? p.service === uuid : uuid.startsWith('0000ffe0'));
         let chars = [];
         try { chars = await service.getCharacteristics(); } catch { continue; }
         for (const ch of chars) {
+          if (ch.uuid.startsWith('02a6c0d1')) boschChar = ch;
           if (ch.properties.write || ch.properties.writeWithoutResponse) {
             if (!pokeTarget) pokeTarget = ch;
           }
@@ -204,16 +233,18 @@ export class LaserLink {
       this.connected = hooked > 0;
       if (hooked) {
         this.status(`Laser connected (${this.device.name || 'unnamed'}) - take a reading on the device`, 'good');
-        // Bosch GLM-family meters stay silent until asked: the documented
-        // MT-protocol measurement request is harmless elsewhere (framed
-        // protocols ignore frames that fail their checksum).
-        if (pokeTarget) {
-          setTimeout(() => {
+        // Bosch meters stay silent until auto-sync is enabled on their
+        // control characteristic; other meters get a harmless generic
+        // poke (framed protocols drop checksum failures).
+        setTimeout(() => {
+          if (boschChar) {
+            boschChar.writeValue(new Uint8Array(BOSCH_AUTOSYNC)).catch(() => {});
+          } else if (pokeTarget) {
             pokeTarget.writeValue(new Uint8Array([0xc0, 0x40, 0x00, 0xee])).catch(() => {});
-          }, 600);
-        }
+          }
+        }, 600);
       } else {
-        this.status('Connected, but the device exposed no readable channel - tell the developer the model; frames may need a different service listed', 'warn');
+        this.status(`Connected, but no readable channel (services seen: ${svcList}). If the list is empty, pair the meter in the system Bluetooth settings first, then retry.`, 'warn');
       }
     } catch (e) {
       // Brave ships Web Bluetooth disabled (fingerprinting protection):
