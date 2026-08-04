@@ -350,7 +350,7 @@ function commitPoint(side) {
   }
   const c = circleIntersect(pos(ui.refs[0]), d1, pos(ui.refs[1]), d2);
   if (!c.ok) return say('Reference points coincide', 'warn');
-  if (c.gap > CLAMP_TOL) return say(gapExplain(c, d1, d2), 'err');
+  if (c.gap > CLAMP_TOL) { buzz(200); return say(gapExplain(c, d1, d2), 'err'); }
   // Corner flows share the two-distance commit path.
   if (ui.flow?.kind === 'item-c1' || ui.flow?.kind === 'item-c2') {
     return acceptCorner(side >= 0 ? c.left : c.right);
@@ -368,6 +368,7 @@ function commitPoint(side) {
   const wallHint = autoWall && (store.openWall()?.pts.length >= 3)
     ? ' - "close room" when you are back at the start'
     : '';
+  buzz([30, 60, 30]);
   say(`${name} placed - flip if it is on the wrong side${wallHint}`, 'good');
 }
 
@@ -384,7 +385,10 @@ function commitMultiPoint(forcedSide = null) {
   const d = ui.multiD;
   const c = circleIntersect(pos(ui.refs[0]), d[0], pos(ui.refs[1]), d[1]);
   if (!c.ok) return say('The first two references coincide', 'warn');
-  if (c.gap > CLAMP_TOL) return say(gapExplain(c, d[0], d[1]) + ' (Escape restarts the fix)', 'err');
+  if (c.gap > CLAMP_TOL) {
+    buzz(200);
+    return say(gapExplain(c, d[0], d[1]) + ' (del steps back a reading, Escape restarts)', 'err');
+  }
   const m = d.length;
   const extraRefs = ui.refs.slice(2, m);
   let side = forcedSide;
@@ -409,6 +413,7 @@ function commitMultiPoint(forcedSide = null) {
   if (p && !plan.isOnScreen(p.x, p.y)) plan.fitAll([...store.solved.pos.values()]);
   const res = (store.solved.pres.get(ui.lastId) || 0) * 100;
   const cls = res < 1 ? 'good' : res < 3 ? 'warn' : 'err';
+  buzz([30, 60, 30]);
   say(`${name} fixed from ${2 + extraRefs.length} references (side chosen automatically) - worst residual ${res.toFixed(1)} cm`, cls);
 }
 
@@ -468,6 +473,11 @@ function pressKey(key) {
     } else if (key === '.') {
       if (!f[ui.active].includes('.')) f[ui.active] += '.';
     } else if (key === 'del') {
+      if (multiMode() && !f[ui.active] && ui.multiD.length) {
+        // A mis-fired laser reading is retracted one step at a time.
+        const popped = ui.multiD.pop();
+        return say(`Removed ${fmtDist(popped)} - shoot ${store.point(ui.refs[ui.multiD.length])?.name} again`, 'warn');
+      }
       f[ui.active] = f[ui.active].slice(0, -1);
     }
   }
@@ -1701,8 +1711,13 @@ function toggle3D() {
 
 // Bluetooth laser: a decoded reading fills the active field exactly as if
 // typed (metres with a decimal point), so you check it and press OK.
+// Haptic cadence for heads-up surveying: short tick = reading logged,
+// triple = point committed, long = refused. No-op without a vibrator.
+const buzz = (p) => { try { navigator.vibrate?.(p); } catch {} };
+
 const laser = new LaserLink({
   onMeasurement: (m) => {
+    buzz(25);
     const txt = m.toFixed(3).replace(/0+$/, '').replace(/\.$/, '.0');
     ui.fields[ui.active] = txt;
     const auto = ui.autoLaser === true;

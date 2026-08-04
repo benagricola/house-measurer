@@ -203,16 +203,21 @@ auto-sync enabled on connect; confirmed against a real device).
 With a laser connected, an **auto** toggle appears beside the reference
 slots (off by default). When on, readings drive the survey without
 touching the screen: in anchor state the first reading measures the
-first wall; thereafter each reading pair from the two selected
-references places a point - first reading fills "to ref 1", second
-fills "to ref 2" and commits, auto-chaining the point into the wall run
-until the room is closed. The measuring loop becomes: stand at the
-corner, shoot cross A, shoot cross B, walk to the next corner. All
-normal guards stay active - implausible pairs are refused (fields kept
-for a re-shot), flip corrects a wrong side, the proposed-corner angle
-and residuals flag bad readings, and undo/delete recover from anything.
-Auto only drives plain point fixing; item placement, wall offsets,
-ceiling heights and checks always wait for an explicit OK.
+first wall; thereafter the **selected reference count is the contract**:
+with two references, every pair of readings places a point; with three
+or four, each point takes that many readings and commits on the last -
+then the next point begins automatically against the same references,
+so "finish this point" and "start the next" need no signal beyond the
+count. Change the contract any time by tapping references on or off
+between points. The status line names which reference to shoot next and
+the phone buzzes the cadence (tick = reading logged, triple = point
+placed, long = refused); a mis-fired shot is retracted with **del**,
+Escape restarts the current fix. All normal guards stay active -
+implausible pairs are refused (readings kept for a re-shot), flip
+corrects a wrong side, the proposed-corner angle and residuals flag bad
+readings, and undo/delete recover from anything. Auto only drives plain
+point fixing; item placement, wall offsets, ceiling heights and checks
+always wait for an explicit OK.
 
 ## Deploying
 

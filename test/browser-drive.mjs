@@ -855,6 +855,11 @@ await key('ok');
 await keys(['2', '1', '0']);
 await key('ok');
 assert(await js('window.app.ui.multiD.length') === 2, 'two distances collected');
+// A mis-fired reading steps back with del.
+await key('del');
+assert(await js('window.app.ui.multiD.length') === 1, 'del retracts the last collected reading');
+await keys(['2', '1', '0']);
+await key('ok');
 await keys(['2', '1', '9']);
 await key('ok');
 st = await state();
