@@ -171,6 +171,11 @@ export class LaserLink {
       this.status('Connected, but no readable measurement channel found - frames will be logged for decoding', 'warn');
       this.connected = hooked > 0;
     } catch (e) {
+      // Brave ships Web Bluetooth disabled (fingerprinting protection):
+      // requestDevice rejects without ever showing a chooser.
+      if (navigator.brave && (e.name === 'SecurityError' || e.name === 'NotFoundError')) {
+        return this.status('Brave blocks Web Bluetooth by default: enable brave://flags/#brave-web-bluetooth-api and restart, or use Chrome.', 'warn');
+      }
       this.status(e.name === 'NotFoundError' ? 'No device chosen' : `Bluetooth: ${e.message}`, 'warn');
     }
   }
