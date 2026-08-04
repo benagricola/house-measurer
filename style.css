@@ -15,6 +15,7 @@
 
 html, body {
   height: 100%;
+  overflow-x: clip; /* nothing may ever scroll the app sideways */
   overscroll-behavior: none;
   background: var(--bg);
   color: var(--ink);
@@ -34,7 +35,9 @@ html, body {
 header {
   display: flex;
   align-items: center;
+  flex-wrap: wrap; /* safety valve: wrap rather than overflow sideways */
   gap: 8px;
+  row-gap: 4px;
   padding: 6px max(12px, env(safe-area-inset-left)) 6px max(12px, env(safe-area-inset-right));
   padding-top: max(6px, env(safe-area-inset-top));
   background: var(--panel);
@@ -572,10 +575,15 @@ header button.on, #modebar button.on {
   font-size: 14px;
 }
 
-/* The header is crowded once 3D/log join; the title is decoration. */
+/* The header is crowded once 3D/data/laser join; the title is decoration
+   and everything else slims down so one row still fits a 360px phone. */
 @media (max-width: 540px) {
   #title { display: none; }
+  header { gap: 4px; padding-left: max(8px, env(safe-area-inset-left)); padding-right: max(8px, env(safe-area-inset-right)); }
+  header button { padding: 7px 8px; font-size: 12.5px; min-width: 34px; }
+  #gap-pill { font-size: 11px; padding: 4px 7px; }
 }
+#refbar { flex-wrap: wrap; row-gap: 5px; }
 
 /* ---- landscape / chromebook: panel on the right ---- */
 @media (orientation: landscape) and (min-width: 700px) {

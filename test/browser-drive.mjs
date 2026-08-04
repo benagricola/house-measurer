@@ -768,6 +768,16 @@ assert(stairKids >= 14, `3D: staircase rendered as steps (${stairKids})`);
 await shot('13-two-floors');
 await click('#view3d-btn');
 
+// No horizontal overflow at phone widths (pill + all header buttons live).
+for (const w of [412, 360]) {
+  await send('Emulation.setDeviceMetricsOverride', { width: w, height: 915, deviceScaleFactor: 2, mobile: true });
+  await settleFrame();
+  const over = await js('document.documentElement.scrollWidth - window.innerWidth');
+  assert(over <= 0, `no horizontal overflow at ${w}px (overflow ${over}px)`);
+}
+await send('Emulation.setDeviceMetricsOverride', { width: 412, height: 915, deviceScaleFactor: 2, mobile: true });
+await settleFrame();
+
 // Laser auto mode drives the point loop: two readings = one point.
 await click('#modebar [data-mode="measure"]');
 await js(`(() => {
