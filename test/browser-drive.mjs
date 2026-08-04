@@ -271,6 +271,16 @@ await key('ok'); // keep existing height
 st = await state();
 assert(st.walls[0].closed && near(st.walls[0].height, 2.5), 're-closed, height kept');
 
+// Per-segment wall thickness: tap the A-B wall, type 55 (an external stone wall).
+await settleFrame();
+const vpt = await viewpos();
+await tapAtRaw(Math.round((vpt.A.x + vpt.B.x) / 2), Math.round((vpt.A.y + vpt.B.y) / 2));
+assert(await js('window.app.ui.flow?.kind') === 'wall-thickness', 'wall tap opens the thickness editor');
+await keys(['5', '5']);
+await key('ok');
+st = await state();
+assert(near(st.walls[0].thick?.['1:2'] ?? 0, 0.55), 'segment thickness stored (55 cm)');
+
 // --- check measurement + residuals + data sheet -----------------------------
 await click('#modebar [data-mode="measure"]');
 await js('window.app.ui.refs = []; window.app.render();');

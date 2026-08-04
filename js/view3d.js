@@ -360,6 +360,7 @@ export class View3D {
         x: pts.reduce((s, p) => s + p.x, 0) / pts.length,
         y: pts.reduce((s, p) => s + p.y, 0) / pts.length,
       };
+      const runIds = wall.closed && pts.length >= 3 ? [...wall.pts, wall.pts[0]] : wall.pts;
       const runs = wall.closed && pts.length >= 3 ? [...pts, pts[0]] : pts;
       for (let i = 0; i + 1 < runs.length; i++) {
         const a = runs[i], b = runs[i + 1];
@@ -367,6 +368,8 @@ export class View3D {
         if (len < 1e-6) continue;
         const dir = { x: (b.x - a.x) / len, y: (b.y - a.y) / len };
         const key = `${wall.id}:${i}`;
+        const segT = wall.thick?.[`${runIds[i]}:${runIds[i + 1]}`]
+          ?? state.wallThickness ?? WALL_T;
 
         const shape = new THREE.Shape([
           new THREE.Vector2(0, 0), new THREE.Vector2(len, 0),
@@ -382,7 +385,7 @@ export class View3D {
             new THREE.Vector2(x1, y1), new THREE.Vector2(x0, y1),
           ]));
         }
-        const geo = this.geo(new THREE.ExtrudeGeometry(shape, { depth: WALL_T, bevelEnabled: false }));
+        const geo = this.geo(new THREE.ExtrudeGeometry(shape, { depth: segT, bevelEnabled: false }));
         const mesh = this.shadowed(new THREE.Mesh(geo, wallMaterial()));
         const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
         let n = { x: -dir.y, y: dir.x };
@@ -390,7 +393,7 @@ export class View3D {
         // Laser readings hit the INNER surface, so the measured line IS the
         // internal face: the slab's thickness grows outward from it.
         const rn = { x: dir.y, y: -dir.x }; // extrusion direction (local +z)
-        const off = rn.x * n.x + rn.y * n.y > 0 ? 0 : -WALL_T;
+        const off = rn.x * n.x + rn.y * n.y > 0 ? 0 : -segT;
         mesh.rotation.y = Math.atan2(dir.y, dir.x);
         mesh.position.set(a.x + rn.x * off, elev, -(a.y + rn.y * off));
         this.group.add(mesh);

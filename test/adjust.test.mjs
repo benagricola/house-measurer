@@ -303,6 +303,20 @@ test('store: v2 state migrates to v3 with floor stamps', () => {
   assert.equal(st.state.items[0].floor, 'f0');
 });
 
+test('store: wall thickness per segment + default', () => {
+  const st = new Store(memStorage());
+  const { a, b } = st.setAnchors(4);
+  const w = st.openWall();
+  st.setWallThickness(w.id, `${a}:${b}`, 0.55);
+  assert.equal(st.wall(w.id).thick[`${a}:${b}`], 0.55);
+  st.setDefaultWallThickness(0.12);
+  assert.equal(st.state.wallThickness, 0.12);
+  st.undo();
+  st.undo();
+  assert.equal(st.state.wallThickness, 0.09);
+  assert.equal(st.wall(w.id).thick, undefined);
+});
+
 test('stairRise: odd first/last risers, degenerate counts', () => {
   assert.equal(stairRise(13, 20), 260);
   assert.equal(stairRise(13, 20, 24), 264);      // odd bottom step

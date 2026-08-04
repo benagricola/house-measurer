@@ -18,6 +18,7 @@ function emptyState() {
     floors: [{ id: 'f0', name: 'ground', elevation: 0, visible: true }],
     activeFloor: 'f0',
     roomHeight: 2.6,
+    wallThickness: 0.09, // default; segments can override (wall.thick)
   };
 }
 
@@ -258,6 +259,21 @@ export class Store {
       const w = s.walls.find((w) => w.id === id);
       if (w) w.height = h;
     });
+  }
+
+  // Thickness of one wall segment, metres. Keyed by its endpoint ids so the
+  // value survives edits elsewhere in the polyline.
+  setWallThickness(id, segKey, t) {
+    this.commit((s) => {
+      const w = s.walls.find((w) => w.id === id);
+      if (!w) return;
+      if (!w.thick) w.thick = {};
+      w.thick[segKey] = t;
+    });
+  }
+
+  setDefaultWallThickness(t) {
+    this.commit((s) => { s.wallThickness = t; });
   }
 
   // True once a room is closed on the given floor - after that, new points

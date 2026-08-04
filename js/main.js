@@ -440,6 +440,11 @@ function pressOk() {
     const h = store.wall(wallId)?.height || store.state.roomHeight || 2.6;
     return endFlow(`Ceiling ${Math.round(h * 100)} cm for this room`, 'good');
   }
+  if (ui.flow?.kind === 'wall-thickness') {
+    const v = parseDistance(ui.fields[0]);
+    if (v != null) store.setWallThickness(ui.flow.wallId, ui.flow.key, v);
+    return endFlow(v != null ? `Wall thickness ${Math.round(v * 100)} cm` : null, 'good');
+  }
   if (ui.flow?.kind === 'item-c2' && parseDistance(ui.fields[0]) == null && parseDistance(ui.fields[1]) == null) {
     // Keep the item's own width, axis-aligned; rotate/drag later.
     ui.flow = { kind: 'item-side', draft: ui.flow.draft, c1: ui.flow.c1, dir: { x: 1, y: 0 }, wEff: ui.flow.draft.w };
@@ -466,12 +471,23 @@ function handleTap(world, screen) {
 
   if (ui.mode === 'wall') {
     const pid = hitPoint(screen);
-    if (pid == null) return false;
-    const r = store.addWallPoint(ui.activeWallId, pid);
-    ui.activeWallId = r.closed ? null : r.wallId;
-    if (r.closed) roomClosed(r.wallId);
-    else say('Wall: tap the next point (first point again closes)');
-    return true;
+    if (pid != null) {
+      const r = store.addWallPoint(ui.activeWallId, pid);
+      ui.activeWallId = r.closed ? null : r.wallId;
+      if (r.closed) roomClosed(r.wallId);
+      else say('Wall: tap the next point (first point again closes)');
+      return true;
+    }
+    // Tap on a wall segment: set that segment's thickness.
+    const seg = hitWall(world, screen);
+    if (seg) {
+      const key = `${seg.pa}:${seg.pb}`;
+      const cur = store.wall(seg.wallId)?.thick?.[key] ?? store.state.wallThickness ?? 0.09;
+      startFlow({ kind: 'wall-thickness', wallId: seg.wallId, key },
+        `Thickness of wall ${store.point(seg.pa)?.name}-${store.point(seg.pb)?.name} in cm (now ${Math.round(cur * 100)})`);
+      return true;
+    }
+    return false;
   }
 
   if (ui.mode === 'move' && !ui.flow) {
@@ -846,6 +862,15 @@ function renderLog() {
     const v = parseFloat($('room-h').value);
     if (isFinite(v) && v > 100) store.setRoomHeight(v / 100);
   });
+  const tRow = addRow(
+    `<span class="log-name">default wall thickness (tap a wall in walls mode to override a segment)</span>` +
+    `<input id="wall-t" type="number" value="${Math.round((store.state.wallThickness || 0.09) * 100)}"> cm ` +
+    `<button data-act="sett">set</button>`
+  );
+  tRow.querySelector('[data-act="sett"]').addEventListener('click', () => {
+    const v = parseFloat($('wall-t').value);
+    if (isFinite(v) && v > 1) store.setDefaultWallThickness(v / 100);
+  });
 
   section('data');
   const dRow = addRow(
@@ -911,6 +936,7 @@ function fieldLabel(i) {
     return i === 0 ? `${store.point(m?.p)?.name ?? '?'} to ${store.point(m?.q)?.name ?? '?'}` : '';
   }
   if (ui.flow?.kind === 'room-height') return i === 0 ? 'ceiling height' : '';
+  if (ui.flow?.kind === 'wall-thickness') return i === 0 ? 'wall thickness' : '';
   const id = ui.refs[i];
   return id ? `to ${store.point(id).name}` : `to ref ${i + 1}`;
 }
@@ -918,7 +944,7 @@ function fieldLabel(i) {
 function renderPanel() {
   const anchor = anchorMode();
   const oneField = ui.flow?.kind === 'item-walloffset' || ui.flow?.kind === 'edit-meas'
-    || ui.flow?.kind === 'room-height';
+    || ui.flow?.kind === 'room-height' || ui.flow?.kind === 'wall-thickness';
   const noFields = ui.flow?.kind === 'item-side' || ui.flow?.kind === 'item-wallmount';
   const showKeypad = ui.mode === 'measure' || anchor || ui.flow;
   const showFields = showKeypad && !noFields;
@@ -1009,7 +1035,7 @@ function renderPanel() {
   let msg = ui.message;
   if (!msg) {
     if (anchor) msg = { text: 'Measure your two anchor marks and type the distance', cls: '' };
-    else if (ui.mode === 'wall') msg = { text: ui.activeWallId ? 'Tap the next point (first point again closes)' : 'Tap points in order to draw a wall', cls: '' };
+    else if (ui.mode === 'wall') msg = { text: ui.activeWallId ? 'Tap the next point (first point again closes)' : 'Tap points in order to draw a wall, or tap a wall to set its thickness', cls: '' };
     else if (ui.mode === 'move') msg = { text: ui.selItem ? 'Drag to move, handle rotates, flip = 90 degrees' : 'Tap an item to select it', cls: '' };
     else if (ui.mode === 'item') msg = { text: 'Tap an item to edit it, or add a new one', cls: '' };
     else if (ui.flow) msg = { text: '', cls: '' };
@@ -1080,16 +1106,17 @@ function renderPlan() {
     for (let i = 0; i + 1 < runs.length; i++) {
       const a = pos(runs[i]), b = pos(runs[i + 1]);
       if (!a || !b) continue;
+      const t = wall.thick?.[`${runs[i]}:${runs[i + 1]}`] ?? store.state.wallThickness ?? 0.09;
       let ox = 0, oy = 0;
       if (cen) {
         const len = Math.hypot(b.x - a.x, b.y - a.y) || 1;
         let nx = -(b.y - a.y) / len, ny = (b.x - a.x) / len;
         const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
         if ((cen.x - mx) * nx + (cen.y - my) * ny > 0) { nx = -nx; ny = -ny; }
-        ox = nx * 0.04; oy = ny * 0.04;
+        ox = nx * t / 2; oy = ny * t / 2;
       }
       content.segments.push({
-        x1: a.x + ox, y1: a.y + oy, x2: b.x + ox, y2: b.y + oy,
+        x1: a.x + ox, y1: a.y + oy, x2: b.x + ox, y2: b.y + oy, t,
         style: ghost ? 'wallGhost' : active ? 'wallActive' : 'wall',
       });
     }

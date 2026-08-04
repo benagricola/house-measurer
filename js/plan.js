@@ -208,9 +208,9 @@ export class PlanView {
     for (const seg of c.segments || []) {
       let widthPx = 1.5, color = COLORS.ray, z = 0.6;
       if (seg.style === 'ab') { widthPx = 2.5; color = COLORS.segment; z = 0.5; }
-      if (seg.style === 'wall') { widthPx = Math.max(3, 0.08 / s); color = COLORS.wall; z = 0.55; }
-      if (seg.style === 'wallActive') { widthPx = Math.max(3, 0.08 / s); color = COLORS.wallActive; z = 0.56; }
-      if (seg.style === 'wallGhost') { widthPx = Math.max(2, 0.08 / s); color = COLORS.wallGhost; z = 0.3; }
+      if (seg.style === 'wall') { widthPx = Math.max(3, (seg.t ?? 0.08) / s); color = COLORS.wall; z = 0.55; }
+      if (seg.style === 'wallActive') { widthPx = Math.max(3, (seg.t ?? 0.08) / s); color = COLORS.wallActive; z = 0.56; }
+      if (seg.style === 'wallGhost') { widthPx = Math.max(2, (seg.t ?? 0.08) / s); color = COLORS.wallGhost; z = 0.3; }
       this.group.add(this.quad(seg.x1, seg.y1, seg.x2, seg.y2, widthPx * s, color, z));
     }
 
