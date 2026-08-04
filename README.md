@@ -27,9 +27,11 @@ client-side, state in localStorage, no build step.
    measurement; residuals show per point on the plan and per measurement in
    the data sheet (green < 1 cm, amber < 3 cm, red beyond). Nothing is
    silently discarded - every measurement can be edited or deleted there
-   and the solution recomputes live. The **circles** button on the plan
-   shows the construction (two circles + rays) behind the last point, or
-   any single selected point.
+   and the solution recomputes live. The **detail** button on the plan
+   overlays the interior angle at every wall corner (reflex corners like
+   chimney breasts read > 180) and the construction circles behind the
+   last or any single selected point; while typing a new point, the angle
+   the proposed wall would make with the run previews live.
 5. Measuring also works inside the 3D view: the survey pins are tappable
    as references, candidates appear as pillars, and the measurement
    circles draw across the floor.

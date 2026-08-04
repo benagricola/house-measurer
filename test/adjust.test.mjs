@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   solve, adjust, solveAdjusted, pointSegDist, itemCorners, pointInItem,
+  angleDeg, interiorAngles,
 } from '../js/geometry.js';
 import { Store } from '../js/state.js';
 import { stairRise, stairSteps } from '../js/items.js';
@@ -347,6 +348,23 @@ test('store: deletePoint cleans up; freed names are reused, never duplicated', (
   assert.ok(st.solved.errors.has(f), 'dependent left unsolved, not silently moved');
   st.undo();
   assert.ok(!st.solved.errors.has(f));
+});
+
+test('angles: between segments and interior angles with reflex corners', () => {
+  close(angleDeg({ x: -1, y: 0 }, { x: 0, y: 0 }, { x: 0, y: 1 }), 90);
+  close(angleDeg({ x: -1, y: 0 }, { x: 0, y: 0 }, { x: 1, y: 1 }), 135);
+  // Unit square, either winding: all 90.
+  const sq = [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 }, { x: 0, y: 1 }];
+  for (const a of interiorAngles(sq)) close(a, 90);
+  for (const a of interiorAngles([...sq].reverse())) close(a, 90);
+  // L-shape: five 90s and one 270 (the chimney-breast corner).
+  const L = [
+    { x: 0, y: 0 }, { x: 2, y: 0 }, { x: 2, y: 1 },
+    { x: 1, y: 1 }, { x: 1, y: 2 }, { x: 0, y: 2 },
+  ];
+  const angs = interiorAngles(L).map((a) => Math.round(a));
+  assert.equal(angs.filter((a) => a === 90).length, 5);
+  assert.equal(angs.filter((a) => a === 270).length, 1);
 });
 
 test('stairRise: odd first/last risers, degenerate counts', () => {

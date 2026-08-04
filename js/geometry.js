@@ -263,6 +263,34 @@ export function pointInItem(p, it, marginM = 0) {
   return Math.abs(lx) <= it.w / 2 + marginM && Math.abs(ly) <= it.d / 2 + marginM;
 }
 
+// Angle at vertex v between the segments v-prev and v-next, degrees 0..180.
+export function angleDeg(prev, v, next) {
+  const a1 = Math.atan2(prev.y - v.y, prev.x - v.x);
+  const a2 = Math.atan2(next.y - v.y, next.x - v.x);
+  let d = Math.abs(a1 - a2) * 180 / Math.PI;
+  if (d > 180) d = 360 - d;
+  return d;
+}
+
+// Interior angle at every vertex of a closed loop (no repeated last point).
+// Orientation-aware, so reflex corners (chimney breasts) read > 180.
+export function interiorAngles(pts) {
+  const n = pts.length;
+  let area = 0;
+  for (let i = 0; i < n; i++) {
+    const p = pts[i], q = pts[(i + 1) % n];
+    area += p.x * q.y - q.x * p.y;
+  }
+  const ccw = area > 0;
+  return pts.map((v, i) => {
+    const prev = pts[(i - 1 + n) % n], next = pts[(i + 1) % n];
+    const d1 = { x: v.x - prev.x, y: v.y - prev.y };
+    const d2 = { x: next.x - v.x, y: next.y - v.y };
+    const turn = Math.atan2(d1.x * d2.y - d1.y * d2.x, d1.x * d2.x + d1.y * d2.y) * 180 / Math.PI;
+    return ccw ? 180 - turn : 180 + turn;
+  });
+}
+
 // Point name from creation index: A..Z, AA, AB, ...
 export function pointName(i) {
   let n = i, s = '';

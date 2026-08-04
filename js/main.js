@@ -3,7 +3,7 @@
 
 import {
   parseDistance, fmtDist, circleIntersect, CLAMP_TOL, pointName,
-  pointSegDist, itemCorners, pointInItem,
+  pointSegDist, itemCorners, pointInItem, angleDeg, interiorAngles,
 } from './geometry.js';
 import { Store } from './state.js';
 import { PlanView } from './plan.js';
@@ -40,7 +40,18 @@ const plan = new PlanView($('plan'), $('overlay'), $('scalebar'), {
 });
 let view3d = null; // created lazily on first 3D toggle
 
-function handleTap3D({ pointId, ghostSide, roomHeightWall, world }) {
+// Open the thickness/height editor for a wall segment (2D or 3D tap).
+function openWallEditor(seg) {
+  const key = `${seg.pa}:${seg.pb}`;
+  const zone = seg.t < 0.3 ? 'a' : seg.t > 0.7 ? 'b' : 'mid';
+  const names = `${store.point(seg.pa)?.name}-${store.point(seg.pb)?.name}`;
+  const zoneTxt = zone === 'mid' ? 'whole top edge'
+    : `height at the ${store.point(zone === 'a' ? seg.pa : seg.pb)?.name} end only`;
+  startFlow({ kind: 'wall-edit', wallId: seg.wallId, key, zone, pa: seg.pa, pb: seg.pb },
+    `Wall ${names}: thickness, then height (${zoneTxt}). Empty keeps current.`);
+}
+
+function handleTap3D({ pointId, ghostSide, roomHeightWall, wallSeg, world }) {
   if (ghostSide != null && twoFieldFlow()) return void commitPoint(ghostSide);
   if (roomHeightWall != null) {
     const w = store.wall(roomHeightWall);
@@ -61,6 +72,8 @@ function handleTap3D({ pointId, ghostSide, roomHeightWall, world }) {
       return toggleRef(pointId);
     }
   }
+  // A wall face: edit it where its height is actually visible.
+  if (wallSeg != null && !ui.flow) return openWallEditor(wallSeg);
 }
 
 // --- helpers ---------------------------------------------------------------
@@ -497,13 +510,7 @@ function handleTap(world, screen) {
     // sets both ends.
     const seg = hitWall(world, screen);
     if (seg) {
-      const key = `${seg.pa}:${seg.pb}`;
-      const zone = seg.t < 0.3 ? 'a' : seg.t > 0.7 ? 'b' : 'mid';
-      const names = `${store.point(seg.pa)?.name}-${store.point(seg.pb)?.name}`;
-      const zoneTxt = zone === 'mid' ? 'whole top edge'
-        : `height at the ${store.point(zone === 'a' ? seg.pa : seg.pb)?.name} end only`;
-      startFlow({ kind: 'wall-edit', wallId: seg.wallId, key, zone, pa: seg.pa, pb: seg.pb },
-        `Wall ${names}: thickness, then height (${zoneTxt}). Empty keeps current.`);
+      openWallEditor(seg);
       return true;
     }
     return false;
@@ -521,13 +528,7 @@ function handleTap(world, screen) {
     // No item under the tap: a wall tap opens the wall editor here too.
     const seg = hitWall(world, screen);
     if (seg) {
-      const key = `${seg.pa}:${seg.pb}`;
-      const zone = seg.t < 0.3 ? 'a' : seg.t > 0.7 ? 'b' : 'mid';
-      const names = `${store.point(seg.pa)?.name}-${store.point(seg.pb)?.name}`;
-      const zoneTxt = zone === 'mid' ? 'whole top edge'
-        : `height at the ${store.point(zone === 'a' ? seg.pa : seg.pb)?.name} end only`;
-      startFlow({ kind: 'wall-edit', wallId: seg.wallId, key, zone, pa: seg.pa, pb: seg.pb },
-        `Wall ${names}: thickness, then height (${zoneTxt}). Empty keeps current.`);
+      openWallEditor(seg);
       return true;
     }
     ui.message = null;
@@ -1179,6 +1180,37 @@ function renderPlan() {
     }
   }
 
+  // Detail view: interior angles at every wall corner on this floor.
+  if (ui.showWork) {
+    const off = 26 * plan.worldPerPx;
+    for (const wall of store.state.walls) {
+      if (!onFloor(wall)) continue;
+      const solved = wall.pts.map(pos);
+      if (solved.some((p) => !p)) continue;
+      const n = solved.length;
+      const closed = wall.closed && n >= 3;
+      const ints = closed ? interiorAngles(solved) : null;
+      for (let i = 0; i < n; i++) {
+        if (!closed && (i === 0 || i === n - 1)) continue;
+        const v = solved[i];
+        const prev = solved[(i - 1 + n) % n], next = solved[(i + 1) % n];
+        const ang = closed ? ints[i] : angleDeg(prev, v, next);
+        const l1 = Math.hypot(prev.x - v.x, prev.y - v.y) || 1;
+        const l2 = Math.hypot(next.x - v.x, next.y - v.y) || 1;
+        let bx = (prev.x - v.x) / l1 + (next.x - v.x) / l2;
+        let by = (prev.y - v.y) / l1 + (next.y - v.y) / l2;
+        const bl = Math.hypot(bx, by);
+        if (bl < 1e-6) { bx = -(next.y - v.y) / l2; by = (next.x - v.x) / l2; }
+        else { bx /= bl; by /= bl; }
+        if (closed && ang > 180) { bx = -bx; by = -by; } // reflex: bisector flips
+        content.labels.push({
+          key: `an${wall.id}:${i}`, x: v.x + bx * off, y: v.y + by * off,
+          text: `${Math.round(ang)}°`, cls: 'ang',
+        });
+      }
+    }
+  }
+
   // A-B baseline (only until walls exist; it is scaffolding, not geometry).
   if (!store.state.walls.length) {
     const pA = pos(pts[0]?.id), pB = pos(pts[1]?.id);
@@ -1233,9 +1265,11 @@ function renderPlan() {
       refIndex: showRefs && ui.refs.indexOf(pt.id) >= 0 ? ui.refs.indexOf(pt.id) : null,
       isLast: !ghost && pt.id === ui.lastId,
     });
+    // Ghost labels sit higher so stacked twins do not print over their
+    // owner's label at the same plan position.
     content.labels.push({
       key: `p${pt.id}`, x: p.x, y: p.y, text: pt.name,
-      cls: ghost ? 'name faint' : 'name', dy: -18,
+      cls: ghost ? 'name faint' : 'name', dy: ghost ? -32 : -18,
     });
     if (ghost) continue;
     const res = store.solved.pres.get(pt.id) || 0;
@@ -1278,6 +1312,31 @@ function renderPlan() {
       content.segments.push({ x1: r2.x, y1: r2.y, x2: t.x, y2: t.y, style: 'ray' });
       content.labels.push({ key: 'rd1', x: (r1.x + t.x) / 2, y: (r1.y + t.y) / 2, text: fmtDist(pv.d1), cls: 'ray' });
       content.labels.push({ key: 'rd2', x: (r2.x + t.x) / 2, y: (r2.y + t.y) / 2, text: fmtDist(pv.d2), cls: 'ray' });
+
+      // The corner the proposed wall would make with the existing run -
+      // live feedback that a mis-read distance shows up as a wrong angle.
+      if (!ui.flow) {
+        const run = !store.hasClosedRoomOn(activeFloor()) && store.openWall();
+        if (run && run.pts.length >= 2) {
+          const vtx = pos(run.pts[run.pts.length - 1]);
+          const prev = pos(run.pts[run.pts.length - 2]);
+          if (vtx && prev) {
+            const ang = angleDeg(prev, vtx, t);
+            const proposedWall = { x1: vtx.x, y1: vtx.y, x2: t.x, y2: t.y };
+            content.segments.push({ ...proposedWall, style: 'ray' });
+            const l1 = Math.hypot(prev.x - vtx.x, prev.y - vtx.y) || 1;
+            const l2 = Math.hypot(t.x - vtx.x, t.y - vtx.y) || 1;
+            let bx = (prev.x - vtx.x) / l1 + (t.x - vtx.x) / l2;
+            let by = (prev.y - vtx.y) / l1 + (t.y - vtx.y) / l2;
+            const bl = Math.hypot(bx, by) || 1;
+            const off = 30 * plan.worldPerPx;
+            content.labels.push({
+              key: 'angp', x: vtx.x + (bx / bl) * off, y: vtx.y + (by / bl) * off,
+              text: `${Math.round(ang)}°`, cls: 'ang prop',
+            });
+          }
+        }
+      }
     }
   }
 
@@ -1528,7 +1587,9 @@ $('wall-back').addEventListener('click', () => {
 $('close-room').addEventListener('click', closeRoomAction);
 $('show-work').addEventListener('click', () => {
   ui.showWork = !ui.showWork;
-  say(ui.showWork ? 'Showing how points were fixed - tap a single point to inspect it' : null);
+  say(ui.showWork
+    ? 'Detail on: wall angles shown; tap a single point to see its construction circles'
+    : null);
 });
 
 $('check-btn').addEventListener('click', commitCheck);

@@ -123,6 +123,16 @@ header button:disabled { opacity: 0.35; }
 }
 .lbl.ghost { font-size: 12px; font-weight: 600; color: var(--teal); }
 .lbl.ghost.dim { opacity: 0.55; font-weight: 400; }
+.lbl.ang {
+  font-size: 11px;
+  font-weight: 600;
+  color: #4a5a74;
+  background: rgba(246, 244, 238, 0.85);
+  padding: 1px 5px;
+  border-radius: 6px;
+  font-variant-numeric: tabular-nums;
+}
+.lbl.ang.prop { color: var(--amber); border: 1px solid var(--amber); }
 .lbl.item {
   font-size: 11px;
   font-weight: 600;

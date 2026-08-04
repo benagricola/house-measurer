@@ -271,6 +271,18 @@ await key('ok'); // keep existing height
 st = await state();
 assert(st.walls[0].closed && near(st.walls[0].height, 2.5), 're-closed, height kept');
 
+// Detail toggle: interior angles appear at every corner of the room.
+await click('#show-work');
+await settleFrame();
+const angTexts = await js(`[...document.querySelectorAll('#overlay .lbl.ang')].map(l => l.textContent)`);
+assert(angTexts.length === 4, `detail shows 4 corner angles (${angTexts.length})`);
+assert(angTexts.some((t) => /^9[01]/.test(t)), `corner near B reads ~91 deg (${angTexts.join(' ')})`);
+const angSum = angTexts.map((t) => parseInt(t)).reduce((a, b) => a + b, 0);
+assert(Math.abs(angSum - 360) <= 2, `quad angles sum to ~360 (${angSum})`);
+await click('#show-work');
+await settleFrame();
+assert(await js(`document.querySelectorAll('#overlay .lbl.ang').length`) === 0, 'detail off hides angles');
+
 // Tap mid-wall A-B: edit thickness (55, stone) and height (both ends).
 await settleFrame();
 let vpt = await viewpos();
@@ -596,6 +608,22 @@ await key('ok');
 assert(near((await state()).walls[0].height, 2.7), 'ceiling edited from the 3D marker');
 await click('#undo');
 assert(near((await state()).walls[0].height, 2.5), 'undo restores the ceiling');
+
+// Tap a solid wall face in 3D: the wall editor opens there too.
+await settleFrame();
+const wf = await js(`(() => {
+  const v = window.app.view3d;
+  const rec = v.wallRecs.find(w => w.mesh.material !== v.wallFaded);
+  const r = document.getElementById('plan3d').getBoundingClientRect();
+  const vec = new v.camera.position.constructor(rec.mid.x, 1.2, -rec.mid.y);
+  vec.project(v.camera);
+  return { x: Math.round(r.left + (vec.x + 1) / 2 * r.width), y: Math.round(r.top + (1 - vec.y) / 2 * r.height) };
+})()`);
+await tapAtRaw(wf.x, wf.y);
+assert(await js('window.app.ui.flow?.kind') === 'wall-edit', '3D wall-face tap opens the wall editor');
+await key('ok');
+await key('ok'); // empty: unchanged
+assert(await js('window.app.ui.flow') === null, '3D wall edit closes cleanly');
 await shot('09-3d');
 await click('#view3d-btn');
 assert(await js('window.app.ui.view') === 'plan', 'back to plan');
@@ -651,6 +679,9 @@ assert(refs.join(',') === `${twins[0].name},${twins[1].name}`, `refs swapped to 
 await keys(['4', '2', '7']);
 await key('ok');
 await keys(['2', '5', '0']);
+await settleFrame();
+const propAng = await js(`[...document.querySelectorAll('#overlay .lbl.ang.prop')].map(l => l.textContent)`);
+assert(propAng.length === 1 && /^9[01]/.test(propAng[0]), `proposed wall angle previews live (${propAng.join(' ')})`);
 await key('ok');
 st = await state();
 assert(st.points.length === 7 && st.points.at(-1).floor === st.activeFloor, 'upstairs point committed');

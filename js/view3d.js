@@ -145,6 +145,20 @@ export class View3D {
         this.cb.onTap({ pointId: rec.pointId, ghostSide: rec.ghostSide, roomHeightWall: rec.roomHeightWall });
         return;
       }
+      // Wall faces are tappable too (edit thickness/height where you can
+      // actually see the height). Faded cutaway walls are skipped, so a
+      // tap through them lands on the solid wall behind.
+      const solidWalls = this.wallRecs.filter((w) => w.mesh.material !== this.wallFaded);
+      const wallHits = this.raycaster.intersectObjects(solidWalls.map((w) => w.mesh), false);
+      if (wallHits.length) {
+        const rec = solidWalls.find((w) => w.mesh === wallHits[0].object);
+        const hp = { x: wallHits[0].point.x, y: -wallHits[0].point.z };
+        const abx = rec.b.x - rec.a.x, aby = rec.b.y - rec.a.y;
+        const len2 = abx * abx + aby * aby || 1;
+        const t = Math.max(0, Math.min(1, ((hp.x - rec.a.x) * abx + (hp.y - rec.a.y) * aby) / len2));
+        this.cb.onTap({ wallSeg: { wallId: rec.wallId, seg: rec.seg, pa: rec.pa, pb: rec.pb, t } });
+        return;
+      }
       const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
       const at = new THREE.Vector3();
       if (this.raycaster.ray.intersectPlane(plane, at)) {
@@ -401,7 +415,11 @@ export class View3D {
         mesh.position.set(a.x + rn.x * off, elev, -(a.y + rn.y * off));
         this.group.add(mesh);
 
-        this.wallRecs.push({ mesh, mid, n, key, cuttable: wall.closed });
+        this.wallRecs.push({
+          mesh, mid, n, key, cuttable: wall.closed,
+          a: { x: a.x, y: a.y }, b: { x: b.x, y: b.y },
+          wallId: wall.id, seg: i, pa: runIds[i], pb: runIds[i + 1],
+        });
 
         const hasDoor = (openings.get(key) || []).some((it) => it.category === 'door');
         if (!hasDoor && len > 0.3) {
