@@ -1,9 +1,10 @@
 // End-to-end drive of the real UI in headless Chrome via CDP (no deps;
-// node >= 22 for the global WebSocket). Exercises keypad, canvas taps,
-// ghost disambiguation, flip, undo/redo, walls, check measurements, the
-// log sheet, items (drop/drag/lock, two-distance and wall placement),
-// layers, the 3D view and JSON export/import; drops screenshots into
-// $SHOTS (default cwd).
+// node >= 22 for the global WebSocket). Exercises the wall-first measuring
+// flow (auto-chained walls, close room, per-room ceiling height), keypad,
+// canvas taps, ghost disambiguation, flip, undo/redo, double-tap zoom,
+// check measurements, the data sheet, items (drop/drag/lock, two-distance
+// and wall placement), layers, 3D (cutaway occlusion AND measuring on the
+// 3D survey pins) and JSON export/import; drops screenshots into $SHOTS.
 //
 // Usage:
 //   python3 -m http.server 8017            # from the repo root
@@ -85,7 +86,6 @@ async function shot(name) {
   console.log('shot', name);
 }
 
-// Raw input at already-fresh coordinates (call settleFrame first).
 async function tapAtRaw(x, y) {
   await send('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', clickCount: 1 });
   await sleep(40);
@@ -127,7 +127,6 @@ process.on('uncaughtException', (e) => {
 const near = (a, b, eps = 1e-3) => Math.abs(a - b) < eps;
 const state = () => js('JSON.stringify(window.app.store.state)').then(JSON.parse);
 
-// Fresh viewport coords of every named point (call after settleFrame).
 const viewpos = () => js(`(() => {
   const r = document.getElementById('plan').getBoundingClientRect();
   const out = {};
@@ -140,18 +139,42 @@ const viewpos = () => js(`(() => {
   return out;
 })()`);
 
-// Settle, then tap a named point where it is NOW.
 async function tapPoint(name) {
   await settleFrame();
   const vp = await viewpos();
   await tapAtRaw(vp[name].x, vp[name].y);
 }
 
+// Viewport position of the left/right circle-intersection candidate for the
+// current refs + typed distances (d1, d2 in metres).
+const ghostVp = (d1, d2, side, in3d = false) => js(`(() => {
+  const app = window.app, st = app.store, ui = app.ui;
+  const P = st.solved.pos.get(ui.refs[0]), Q = st.solved.pos.get(ui.refs[1]);
+  const d1 = ${d1}, d2 = ${d2};
+  const dx = Q.x - P.x, dy = Q.y - P.y, d = Math.hypot(dx, dy);
+  const ux = dx / d, uy = dy / d, a = (d1 * d1 - d2 * d2 + d * d) / (2 * d);
+  const h = Math.sqrt(Math.max(0, d1 * d1 - a * a));
+  const bx = P.x + ux * a, by = P.y + uy * a;
+  const g = ${side} >= 0
+    ? { x: bx - uy * h, y: by + ux * h }
+    : { x: bx + uy * h, y: by - ux * h };
+  if (${in3d}) {
+    const v = app.view3d;
+    const r = document.getElementById('plan3d').getBoundingClientRect();
+    const vec = new v.camera.position.constructor(g.x, 0.55, -g.y);
+    vec.project(v.camera);
+    return { x: Math.round(r.left + (vec.x + 1) / 2 * r.width), y: Math.round(r.top + (1 - vec.y) / 2 * r.height) };
+  }
+  const r = document.getElementById('plan').getBoundingClientRect();
+  const s = app.plan.worldToScreen(g.x, g.y);
+  return { x: Math.round(r.left + s.x), y: Math.round(r.top + s.y) };
+})()`);
+
 await send('Runtime.enable');
 await send('Page.enable');
 await send('Log.enable');
 await send('Network.enable');
-await send('Network.setCacheDisabled', { cacheDisabled: true }); // always test the current files
+await send('Network.setCacheDisabled', { cacheDisabled: true });
 await send('Emulation.setDeviceMetricsOverride', { width: 412, height: 915, deviceScaleFactor: 2, mobile: true });
 await send('Page.navigate', { url: APP });
 for (let i = 0; i < 40 && !(await js('!!window.app').catch(() => false)); i++) await sleep(200);
@@ -162,60 +185,56 @@ for (let i = 0; i < 40 && !(await js('!!window.app').catch(() => false)); i++) a
 
 await shot('01-empty');
 
-// --- M1: anchors + two chained points --------------------------------------
+// --- anchors start the wall run --------------------------------------------
 await keys(['3', '4', '2']);
 await shot('02-anchor-typing');
 await key('ok');
 let st = await state();
 assert(st.points.length === 2, 'anchors created');
 assert(near(st.measurements[0].d, 3.42), 'A-B = 3.42 m');
+assert(st.walls.length === 1 && st.walls[0].pts.length === 2, 'anchors started the wall run');
 
-await keys(['3', '0', '0']);
+// C measured in perimeter order (refs kept as A, B): 4.27 m and 2.50 m.
+await keys(['4', '2', '7']);
 await key('ok');
-await keys(['4', '0', '0']);
+await keys(['2', '5', '0']);
 await shot('03-candidates');
 await key('ok');
 st = await state();
 assert(st.points.length === 3, 'C committed');
 let posC = await js('[...window.app.store.solved.pos][2][1]');
-assert(near(posC.x, 0.68661) && near(posC.y, 2.92108), `C at expected spot (${posC.x.toFixed(4)}, ${posC.y.toFixed(4)})`);
+assert(near(posC.x, 3.4620, 2e-3) && near(posC.y, 2.4996, 2e-3), `C at expected spot (${posC.x.toFixed(4)}, ${posC.y.toFixed(4)})`);
+assert(st.walls[0].pts.length === 3, 'C auto-chained into the wall run');
 
 await key('flip');
 posC = await js('[...window.app.store.solved.pos][2][1]');
-assert(near(posC.y, -2.92108), 'flip moves C to the other side');
+assert(posC.y < 0, 'flip moves C to the other side');
 await key('flip');
 
-await tapPoint('A'); // refs were [A,B]; drop A
-await tapPoint('C'); // refs [B,C]
+// D from A and C: 3.00 m and 2.81 m; commit by tapping the primary ghost.
+await tapPoint('B'); // refs [A,B] -> drop B
+await tapPoint('C'); // refs [A,C]
 let refs = await js('window.app.ui.refs.map(id => window.app.store.point(id).name)');
-assert(refs.join(',') === 'B,C', `taps select refs B,C (${refs})`);
-
-await keys(['2', '5', '0']);
+assert(refs.join(',') === 'A,C', `taps select refs A,C (${refs})`);
+await keys(['3', '0', '0']);
 await key('ok');
-await keys(['2', '8', '0']);
-// Tap the non-default (right side) ghost.
+await keys(['2', '8', '1']);
 await settleFrame();
-const rg = await js(`(() => {
-  const app = window.app, st = app.store, ui = app.ui;
-  const P = st.solved.pos.get(ui.refs[0]), Q = st.solved.pos.get(ui.refs[1]);
-  const d1 = 2.5, d2 = 2.8;
-  const dx = Q.x - P.x, dy = Q.y - P.y, d = Math.hypot(dx, dy);
-  const ux = dx / d, uy = dy / d, a = (d1 * d1 - d2 * d2 + d * d) / (2 * d);
-  const h = Math.sqrt(Math.max(0, d1 * d1 - a * a));
-  const right = { x: P.x + ux * a + uy * h, y: P.y + uy * a - ux * h };
-  const r = document.getElementById('plan').getBoundingClientRect();
-  const s = app.plan.worldToScreen(right.x, right.y);
-  return { x: Math.round(r.left + s.x), y: Math.round(r.top + s.y) };
-})()`);
-await tapAtRaw(rg.x, rg.y);
+const lg = await ghostVp(3.0, 2.81, +1);
+await tapAtRaw(lg.x, lg.y);
 st = await state();
 assert(st.points.length === 4, 'D committed by tapping ghost');
-assert(st.points[3]?.fix?.side === -1, 'ghost tap chose the right-hand side');
+assert(st.points[3]?.fix?.side === 1, 'ghost tap kept the left side');
+const posD = await js('[...window.app.store.solved.pos][3][1]');
+assert(near(posD.x, 0.684, 3e-3) && near(posD.y, 2.921, 3e-3), `D at expected spot (${posD.x.toFixed(3)}, ${posD.y.toFixed(3)})`);
+assert(st.walls[0].pts.length === 4 && !st.walls[0].closed, 'run is A-B-C-D, still open');
 
 await click('#undo');
 assert((await state()).points.length === 3, 'undo removes D');
+assert((await state()).walls[0].pts.length === 3, 'undo also removes its wall link');
 await click('#redo');
-assert((await state()).points.length === 4, 'redo restores D');
+st = await state();
+assert(st.points.length === 4 && st.walls[0].pts.length === 4, 'redo restores D and the link');
 
 // One-handed zoom: double-tap on empty canvas zooms in about the tap.
 await settleFrame();
@@ -230,35 +249,37 @@ const vh1 = await js('window.app.plan.viewH');
 assert(vh1 < vh0 * 0.7, `double-tap zooms in (${vh0.toFixed(2)} -> ${vh1.toFixed(2)})`);
 await click('#fit');
 
-// --- M2: walls --------------------------------------------------------------
-// Entering wall mode grows the canvas (keypad hides); refit at the new
-// aspect so every point is actually on screen before tapping.
+// --- close the room, set its ceiling ---------------------------------------
+assert(await js(`document.getElementById('close-room').style.display`) !== 'none', 'close-room button offered');
+await click('#close-room');
+assert(await js('window.app.ui.flow?.kind') === 'room-height', 'closing asks for the ceiling height');
+await keys(['2', '5', '0']);
+await key('ok');
+st = await state();
+assert(st.walls[0].closed, 'room closed');
+assert(near(st.walls[0].height, 2.5), 'ceiling height stored on the room');
+await shot('04-room-closed');
+
+// Step back re-opens; close-room again re-closes (height kept).
 await click('#modebar [data-mode="wall"]');
 await settleFrame();
-await click('#fit');
-for (const n of ['A', 'C', 'D', 'B', 'A']) await tapPoint(n);
-st = await state();
-assert(st.walls.length === 1 && st.walls[0]?.closed, 'wall drawn A-C-D-B and closed');
-assert(st.walls[0]?.pts.length === 4, 'closed loop has 4 points');
-await shot('04-walls-closed');
-
-// Step back then re-close.
 await click('#wall-back');
 st = await state();
-assert(!st.walls[0].closed, 'step back un-closes');
-await js('window.app.ui.activeWallId = window.app.store.state.walls[0].id');
-await tapPoint('A');
-assert((await state()).walls[0].closed, 're-closed');
+assert(!st.walls[0].closed, 'step back re-opens the loop');
+await click('#close-room');
+await key('ok'); // keep existing height
+st = await state();
+assert(st.walls[0].closed && near(st.walls[0].height, 2.5), 're-closed, height kept');
 
-// --- M2: check measurement + residuals + log --------------------------------
+// --- check measurement + residuals + data sheet -----------------------------
 await click('#modebar [data-mode="measure"]');
 await js('window.app.ui.refs = []; window.app.render();');
 await tapPoint('A');
 await tapPoint('D');
 refs = await js('window.app.ui.refs.map(id => window.app.store.point(id).name)');
 assert(refs.join(',') === 'A,D', `refs A,D for check (${refs})`);
-// True |A-D| ~ 4.264 m; record 4.28 -> ~1.6 cm disagreement.
-await keys(['4', '2', '8']);
+// True |A-D| = 3.00 m; record 3.02 -> 2 cm disagreement.
+await keys(['3', '0', '2']);
 await click('#check-btn');
 st = await state();
 assert(st.measurements.length === 6, 'check measurement recorded (6 total)');
@@ -266,21 +287,30 @@ const pres = await js('[...window.app.store.solved.pres.values()].map(v => v * 1
 assert(pres.some((v) => v > 0.2), `residuals appeared after bad check (max ${Math.max(...pres).toFixed(2)} cm)`);
 await shot('05-residuals');
 
-await click('#log-btn');
-await shot('06-log');
-const logText = await js(`document.getElementById('log-list').innerText`);
-assert(logText.includes('A to D'), 'log lists the check measurement');
-assert(/cm/.test(logText), 'log shows residuals');
+// The descriptive impossible-circles message.
+await keys(['5', '0']);
+await key('ok');
+await keys(['5', '0']);
+const statusText = await js(`(document.querySelector('[data-key="ok"]').click(), document.getElementById('status').textContent)`);
+assert(/Too short|overshoots/.test(statusText) && /cm|m /.test(statusText), `gap error explains itself (${statusText.slice(0, 60)}...)`);
+await keys(['del', 'del']); // clear field 1
+await js(`window.app.ui.fields = ['','']; window.app.ui.active = 0; window.app.render();`);
 
-// Edit the check measurement down to 4.26 -> residuals shrink.
+await click('#log-btn');
+await shot('06-data');
+const logText = await js(`document.getElementById('log-list').innerText`);
+assert(logText.includes('A to D'), 'data sheet lists the check measurement');
+assert(/ceiling 250 cm/.test(logText), 'data sheet shows the room ceiling');
+assert(/cm/.test(logText), 'data sheet shows residuals');
+
+// Edit the check measurement to the true 3.00 -> residuals shrink.
 await js(`[...document.querySelectorAll('#log-list [data-act="edit"]')].at(-1).click()`);
-await keys(['4', '2', '6']);
+await keys(['3', '0', '0']);
 await key('ok');
 st = await state();
-assert(near(st.measurements.at(-1).d, 4.26), 'measurement edited via log + keypad');
+assert(near(st.measurements.at(-1).d, 3.0), 'measurement edited via data sheet + keypad');
 
-// --- M3: items --------------------------------------------------------------
-// Drop a fridge freehand, drag it, rotate it, lock it.
+// --- items ------------------------------------------------------------------
 await click('#modebar [data-mode="item"]');
 await click('#item-new');
 await js(`
@@ -310,7 +340,7 @@ await dragRaw(iv.x, iv.y, iv.x + 70, iv.y - 40);
 let iv2 = await itemVp('fridge');
 const [edx, edy] = [70 * iv.wpp, 40 * iv.wpp];
 assert(near(iv2.wx - iv.wx, edx, edx * 0.15) && near(iv2.wy - iv.wy, edy, edy * 0.15),
-  `drag moved fridge by the drag delta (got ${(iv2.wx - iv.wx).toFixed(3)}, ${(iv2.wy - iv.wy).toFixed(3)}; want ${edx.toFixed(3)}, ${edy.toFixed(3)})`);
+  `drag moved fridge by the drag delta (got ${(iv2.wx - iv.wx).toFixed(3)}, ${(iv2.wy - iv.wy).toFixed(3)})`);
 
 await key('flip');
 iv = await itemVp('fridge');
@@ -326,7 +356,7 @@ iv2 = await itemVp('fridge');
 assert(near(iv2.wx, iv.wx, 1e-9), 'locked item does not move (drag pans instead)');
 await click('#fit');
 
-// Place a worktop by two distances to its corner, from A and B.
+// Worktop by two distances to its corner, from A and B.
 await click('#modebar [data-mode="item"]');
 await click('#item-new');
 await js(`
@@ -338,7 +368,7 @@ await js(`
 `);
 await click('#if-place-measure');
 assert(await js('window.app.ui.flow?.kind') === 'item-c1', 'corner-1 flow started');
-await js('window.app.ui.refs = []; window.app.render();'); // drop stale refs
+await js('window.app.ui.refs = []; window.app.render();');
 await tapPoint('A');
 await tapPoint('B');
 refs = await js('window.app.ui.refs.map(id => window.app.store.point(id).name)');
@@ -348,17 +378,26 @@ await key('ok');
 await keys(['2', '5', '0']);
 await key('ok'); // corner 1 committed (left side default)
 assert(await js('window.app.ui.flow?.kind') === 'item-c2', 'corner-2 flow');
-await key('ok'); // no distances -> keep width, axis aligned -> side choice
-assert(await js('window.app.ui.flow?.kind') === 'item-side', 'side choice');
+// Corner 2 straight from an existing point: tap B with nothing typed.
+await tapPoint('B');
+assert(await js('window.app.ui.flow?.kind') === 'item-side', 'tapped point accepted as corner 2');
 await shot('07-item-side-choice');
-await key('flip'); // put it on the other side
+await key('flip');
 await key('ok');
 st = await state();
 const wt = st.items.find((i) => i.name === 'worktop');
 assert(!!wt, 'worktop committed');
-assert(wt && near(wt.w, 1.8, 1e-6) && near(wt.rot, 0, 1e-6), 'worktop axis-aligned with kept width');
+const expW = await js(`(() => {
+  const st = window.app.store;
+  const A = st.solved.pos.get(st.state.points[0].id), B = st.solved.pos.get(st.state.points[1].id);
+  const d = 3.42, d1 = 1.0, d2 = 2.5;
+  const a = (d1*d1 - d2*d2 + d*d) / (2*d);
+  const h = Math.sqrt(d1*d1 - a*a);
+  return Math.hypot(B.x - (A.x + a), h);
+})()`);
+assert(wt && near(wt.w, expW, 1e-3), `worktop width spans corner1 to B (${wt.w.toFixed(3)} vs ${expW.toFixed(3)})`);
 
-// Wall-mounted window: tap wall A-C, offset 40 cm from A.
+// Wall-mounted window on the west wall (D-A), offset 40 cm from A.
 await click('#modebar [data-mode="item"]');
 await click('#item-new');
 await js(`
@@ -372,8 +411,7 @@ await js(`
 await click('#if-place-wall');
 await settleFrame();
 const vpw = await viewpos();
-// One third along wall A-C from A: t ~ 0.33 so the near end is unambiguous.
-await tapAtRaw(Math.round(vpw.A.x * 0.67 + vpw.C.x * 0.33), Math.round(vpw.A.y * 0.67 + vpw.C.y * 0.33));
+await tapAtRaw(Math.round(vpw.D.x * 0.25 + vpw.A.x * 0.75), Math.round(vpw.D.y * 0.25 + vpw.A.y * 0.75));
 assert(await js('window.app.ui.flow?.kind') === 'item-walloffset', 'wall tapped, offset flow');
 await keys(['4', '0']);
 await key('ok');
@@ -392,6 +430,8 @@ await js(`document.getElementById('new-layer-name').value = 'plan B'`);
 await js(`[...document.querySelectorAll('#log-list [data-act="add"]')].at(0).click()`);
 st = await state();
 assert(st.layers.length === 2 && st.activeLayer !== 'current', 'proposal layer added and active');
+const visLabels = await js(`[...document.querySelectorAll('#log-list [data-act="vis"]')].map(b => b.className)`);
+assert(visLabels.every((c) => /vis-on|vis-off/.test(c)), 'visibility chips use explicit on/off styling');
 await click('#log-close');
 await click('#modebar [data-mode="item"]');
 await click('#item-new');
@@ -401,23 +441,22 @@ st = await state();
 assert(st.items.at(-1).layer === st.activeLayer, 'island on proposal layer');
 const rectCountBefore = await js('window.app.plan.content.rects.length');
 await click('#log-btn');
-await js(`[...document.querySelectorAll('#log-list [data-act="vis"]')].at(1).click()`); // hide proposal
+await js(`[...document.querySelectorAll('#log-list [data-act="vis"]')].at(1).click()`);
 await click('#log-close');
 const rectCountAfter = await js('window.app.plan.content.rects.length');
 assert(rectCountAfter === rectCountBefore - 1, `hiding layer hides its items (${rectCountBefore} -> ${rectCountAfter})`);
 await js(`document.getElementById('log-btn').click()`);
-await js(`[...document.querySelectorAll('#log-list [data-act="vis"]')].at(1).click()`); // show again
+await js(`[...document.querySelectorAll('#log-list [data-act="vis"]')].at(1).click()`);
 await click('#log-close');
 
-// --- M4: 3D ----------------------------------------------------------------
+// --- 3D: cutaway + measuring on the survey pins -----------------------------
 await click('#view3d-btn');
 await sleep(600);
 assert(await js('window.app.ui.view') === '3d', '3D view active');
-assert(await js('!!window.app.view3d'), 'View3D created');
 const nMeshes = await js('window.app.view3d.group.children.length');
 assert(nMeshes >= 9, `3D scene has walls+floor+items (${nMeshes} meshes)`);
+assert(await js('window.app.view3d.vizGroup.children.length') >= 8, 'survey pins rendered in 3D');
 
-// Dollhouse cutaway: camera-side walls fade, far walls stay solid.
 const occ0 = await js(`(() => {
   const v = window.app.view3d;
   return { walls: v.wallRecs.map(w => ({ key: w.key, mid: w.mid, faded: w.mesh.material === v.wallFaded })),
@@ -429,7 +468,6 @@ assert(occ0.walls.filter((w) => w.faded).length === 2, `two camera-side walls fa
 assert(sorted[0].faded, 'nearest wall to camera is faded');
 assert(!sorted.at(-1).faded, 'farthest wall stays solid');
 
-// Orbit to the far (north) side: the fades swap.
 const occ1 = await js(`(() => {
   const v = window.app.view3d;
   const t = v.controls.target;
@@ -442,7 +480,6 @@ const north = occ1.reduce((a, b) => (a.mid.y > b.mid.y ? a : b));
 const south = occ1.reduce((a, b) => (a.mid.y < b.mid.y ? a : b));
 assert(north.faded && !south.faded, 'orbiting to the far side swaps which walls fade');
 
-// From the west the window's wall faces the camera: the window fades too.
 const occ2 = await js(`(() => {
   const v = window.app.view3d;
   const t = v.controls.target;
@@ -453,23 +490,53 @@ const occ2 = await js(`(() => {
 })()`);
 assert(occ2.win.length === 1 && occ2.win[0] === true, 'window fades with its wall');
 
-// Back to the default pose for the screenshot.
+// Measure in 3D: pick refs by tapping pins, commit a point on a ghost.
 await js('window.app.view3d.refit(); window.app.render();');
 await sleep(300);
+await js('window.app.ui.refs = []; window.app.render();');
+await settleFrame();
+const pin3d = (name) => js(`(() => {
+  const v = window.app.view3d;
+  const r = document.getElementById('plan3d').getBoundingClientRect();
+  const pt = window.app.store.state.points.find(p => p.name === '${name}');
+  const p = window.app.store.solved.pos.get(pt.id);
+  const vec = new v.camera.position.constructor(p.x, 0.3, -p.y);
+  vec.project(v.camera);
+  return { x: Math.round(r.left + (vec.x + 1) / 2 * r.width), y: Math.round(r.top + (1 - vec.y) / 2 * r.height) };
+})()`);
+let pv3 = await pin3d('A');
+await tapAtRaw(pv3.x, pv3.y);
+pv3 = await pin3d('B');
+await tapAtRaw(pv3.x, pv3.y);
+refs = await js('window.app.ui.refs.map(id => window.app.store.point(id).name)');
+assert(refs.join(',') === 'A,B', `3D pin taps select refs (${refs})`);
+await keys(['2', '0', '0']);
+await key('ok');
+await keys(['2', '2', '0']);
+assert(await js('window.app.view3d.tapTargets.filter(t => t.ghostSide != null).length') === 2, '3D candidate ghosts tappable');
+await shot('09-3d-measuring');
+await settleFrame();
+const g3 = await ghostVp(2.0, 2.2, +1, true);
+await tapAtRaw(g3.x, g3.y);
+st = await state();
+assert(st.points.length === 5, 'point committed from inside 3D');
+await click('#undo');
+assert((await state()).points.length === 4, 'undo removes the 3D-placed point');
 await shot('09-3d');
 await click('#view3d-btn');
 assert(await js('window.app.ui.view') === 'plan', 'back to plan');
 
-// --- M4: export / import ----------------------------------------------------
+// --- export / import --------------------------------------------------------
 const exported = await js('window.app.exportString()');
 assert(JSON.parse(exported).state.items.length === (await state()).items.length, 'export contains items');
 await js(`window.app.store.clearAll()`);
 assert((await state()).points.length === 0, 'cleared');
-await js(`window.app.importFromText(${JSON.stringify('X')})`); // broken input
+await js(`window.app.importFromText(${JSON.stringify('X')})`);
 assert((await state()).points.length === 0, 'broken import rejected');
 await js(`window.app.importFromText(${JSON.stringify(exported)})`);
 st = await state();
 assert(st.points.length === 4 && st.items.length === 4, 'import restored everything');
+assert(near(st.walls[0].height, 2.5), 'per-room ceiling survives export/import');
 
 // --- persistence across reload ---------------------------------------------
 await send('Page.navigate', { url: APP });
@@ -478,7 +545,6 @@ st = await state();
 assert(st.points.length === 4 && st.items.length === 4 && st.walls.length === 1, 'full state survives reload');
 await shot('10-after-reload');
 
-// Desktop layout.
 await send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false });
 await sleep(400);
 await shot('11-desktop');

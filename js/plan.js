@@ -352,6 +352,9 @@ export class PlanView {
           type: claimed ? 'drag' : 'pan', id: e.pointerId, t0: performance.now(),
           startX: e.clientX, startY: e.clientY,
           lastX: e.clientX, lastY: e.clientY, moved: false,
+          // Fingers wobble far more than mice; a tight threshold turns taps
+          // into 1-frame pans and "nothing happens".
+          slop: e.pointerType === 'touch' ? 18 : 9,
         };
       } else if (this.pointers.size === 2) {
         if (this.gesture?.type === 'drag' && this.cb.onDragEnd) this.cb.onDragEnd(true);
@@ -375,7 +378,7 @@ export class PlanView {
       if (!g) return;
       if ((g.type === 'pan' || g.type === 'drag') && e.pointerId === g.id) {
         const dx = e.clientX - g.lastX, dy = e.clientY - g.lastY;
-        if (Math.hypot(e.clientX - g.startX, e.clientY - g.startY) > 9) g.moved = true;
+        if (Math.hypot(e.clientX - g.startX, e.clientY - g.startY) > g.slop) g.moved = true;
         if (g.moved) {
           if (g.type === 'pan') {
             const s = this.worldPerPx;

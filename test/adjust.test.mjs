@@ -94,9 +94,43 @@ test('itemCorners and pointInItem respect rotation', () => {
   assert.ok(!pointInItem({ x: 1.9, y: 1 }, it));
 });
 
+test('store: anchors start a wall run; points auto-chain; close; heights', () => {
+  const st = new Store(memStorage());
+  const { a, b, wallId } = st.setAnchors(4);
+  assert.ok(wallId != null, 'anchor commit starts the wall run');
+  assert.deepEqual(st.state.walls[0].pts, [a, b]);
+
+  const c = st.addPoint(a, b, 3, 5, 1, { appendWall: wallId });
+  assert.deepEqual(st.state.walls[0].pts, [a, b, c], 'point appended to the run');
+  assert.equal(st.hasClosedRoom, false);
+  assert.equal(st.openWall().id, wallId);
+
+  assert.equal(st.closeWall(wallId), true);
+  assert.equal(st.state.walls[0].closed, true);
+  assert.equal(st.hasClosedRoom, true);
+  assert.equal(st.openWall(), null);
+
+  st.setWallHeight(wallId, 2.4);
+  assert.equal(st.wall(wallId).height, 2.4);
+
+  // After a closed room, addPoint without appendWall leaves walls alone.
+  const d = st.addPoint(a, c, 2, 2.5, 1);
+  assert.equal(st.state.walls[0].pts.length, 3);
+  assert.ok(st.point(d));
+
+  // One undo step covers point + wall link together.
+  st.undo(); // remove d
+  st.undo(); // un-set height
+  st.undo(); // un-close
+  st.undo(); // removes c AND its wall link atomically
+  assert.equal(st.state.points.length, 2);
+  assert.deepEqual(st.state.walls[0].pts, [a, b]);
+});
+
 test('store: walls draw, close, step back, delete', () => {
   const st = new Store(memStorage());
-  const { a, b } = st.setAnchors(4);
+  const { a, b } = st.setAnchors(4, { wall: false });
+  assert.equal(st.state.walls.length, 0, 'wall:false skips the auto run');
   const c = st.addPoint(a, b, 3, 5, 1);
 
   let r = st.addWallPoint(null, a);

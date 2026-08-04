@@ -5,8 +5,14 @@
 // Rendering: PBR materials with procedural canvas textures (js/textures.js),
 // a generated environment map, one soft shadow-casting sun, tone mapping.
 // Walls are extruded shapes with real openings cut for mounted windows and
-// doors. Dollhouse cutaway: walls between the camera and the room interior
-// fade to translucent (recomputed while orbiting) and stop casting shadows.
+// doors, each room using its own ceiling height. Dollhouse cutaway: walls
+// of a closed room between the camera and its interior fade to translucent
+// (open runs stay solid - nothing to reveal yet).
+//
+// Measuring works here too: main.js passes a survey viz (points, candidate
+// ghosts, circles, rays); points and ghosts are tappable via raycast and
+// labelled through a DOM overlay, so refs can be picked and points placed
+// without leaving 3D.
 
 import * as THREE from 'three';
 import { OrbitControls } from '../vendor/OrbitControls.js';
@@ -21,10 +27,13 @@ import {
 
 const WALL_T = 0.09; // rendered wall thickness, metres
 const WALL_COLOR = 0xd9d2bf;
+const PIN = { anchor: 0x1f2a44, point: 0x0e7a6f, ref: 0xe8960c, ghost: 0x0e7a6f };
 
 export class View3D {
-  constructor(canvas) {
+  constructor(canvas, overlay, callbacks = {}) {
     this.canvas = canvas;
+    this.overlay = overlay;
+    this.cb = callbacks;
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
     this.renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -34,7 +43,6 @@ export class View3D {
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
     this.scene = new THREE.Scene();
-    // Soft warm sky gradient + matching fog.
     const sky = document.createElement('canvas');
     sky.width = 2; sky.height = 256;
     const sctx = sky.getContext('2d');
@@ -78,26 +86,71 @@ export class View3D {
 
     this.group = new THREE.Group();
     this.scene.add(this.group);
+    this.vizGroup = new THREE.Group();
+    this.scene.add(this.vizGroup);
     this._tempGeos = [];
     this._dirty = false;
+    this.labelPool = new Map();
+    this.viz = null;
 
     this.wallFaded = new THREE.MeshLambertMaterial({
       color: WALL_COLOR, transparent: true, opacity: 0.12, depthWrite: false,
     });
-    this.wallRecs = [];  // { mesh, mid, n, key } - n points away from the room
-    this.mountRecs = []; // { meshes, key, faded } - window/door composites
+    this.wallRecs = [];
+    this.mountRecs = [];
+    this.tapTargets = []; // { mesh, pointId? , ghostSide? }
 
-    const ground = new THREE.Mesh(
-      new THREE.CircleGeometry(60, 48),
-      groundMaterial()
-    );
+    const ground = new THREE.Mesh(new THREE.CircleGeometry(60, 48), groundMaterial());
     ground.rotation.x = -Math.PI / 2;
     ground.position.y = -0.012;
     ground.receiveShadow = true;
     this.scene.add(ground);
 
+    this.geoSphere = new THREE.SphereGeometry(1, 14, 10);
+    this.geoCyl = new THREE.CylinderGeometry(1, 1, 1, 10);
+    const pts = [];
+    for (let i = 0; i <= 96; i++) {
+      const a = (i / 96) * Math.PI * 2;
+      pts.push(new THREE.Vector3(Math.cos(a), 0, Math.sin(a)));
+    }
+    this.geoCircleLine = new THREE.BufferGeometry().setFromPoints(pts);
+
+    this.raycaster = new THREE.Raycaster();
+    this.initTap();
+
     this.ro = new ResizeObserver(() => this.resize());
     this.ro.observe(canvas.parentElement);
+  }
+
+  initTap() {
+    let start = null;
+    this.canvas.addEventListener('pointerdown', (e) => {
+      start = { x: e.clientX, y: e.clientY, t: performance.now(), slop: e.pointerType === 'touch' ? 18 : 9 };
+    });
+    this.canvas.addEventListener('pointerup', (e) => {
+      if (!start) return;
+      const moved = Math.hypot(e.clientX - start.x, e.clientY - start.y) > start.slop;
+      const quick = performance.now() - start.t < 700;
+      start = null;
+      if (moved || !quick || !this.cb.onTap) return;
+      const r = this.canvas.getBoundingClientRect();
+      const ndc = new THREE.Vector2(
+        ((e.clientX - r.left) / r.width) * 2 - 1,
+        -((e.clientY - r.top) / r.height) * 2 + 1
+      );
+      this.raycaster.setFromCamera(ndc, this.camera);
+      const hits = this.raycaster.intersectObjects(this.tapTargets.map((t) => t.mesh), false);
+      if (hits.length) {
+        const rec = this.tapTargets.find((t) => t.mesh === hits[0].object);
+        this.cb.onTap({ pointId: rec.pointId, ghostSide: rec.ghostSide });
+        return;
+      }
+      const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+      const at = new THREE.Vector3();
+      if (this.raycaster.ray.intersectPlane(plane, at)) {
+        this.cb.onTap({ world: { x: at.x, y: -at.z } });
+      }
+    });
   }
 
   resize() {
@@ -128,7 +181,6 @@ export class View3D {
     const quad = (a, bq, c, d) => pos.push(...a, ...bq, ...c, ...a, ...c, ...d);
     for (let i = 0; i < 4; i++) {
       const j = (i + 1) % 4;
-      // b runs CCW seen from above; wind so normals face outward.
       quad(
         [b[j][0], 0, b[j][1]], [b[i][0], 0, b[i][1]],
         [t[i][0], h, t[i][1]], [t[j][0], h, t[j][1]]
@@ -158,7 +210,6 @@ export class View3D {
     bar(t, it.h - 2 * t, depth, -it.w / 2 + t / 2, 0);
     bar(t, it.h - 2 * t, depth, it.w / 2 - t / 2, 0);
     if (it.w > 0.85) bar(0.05, it.h - 2 * t, depth * 0.8, 0, 0);
-    // sill sticking into the room
     bar(it.w + 0.08, 0.035, depth + 0.1, 0, -it.h / 2 - 0.017);
     const glass = new THREE.Mesh(
       this.geo(new THREE.PlaneGeometry(it.w - 2 * t, it.h - 2 * t)),
@@ -230,11 +281,10 @@ export class View3D {
 
   buildGenericItem(it) {
     const r = Math.min(0.018, it.w / 6, it.h / 6, it.d / 6);
-    const mesh = this.shadowed(new THREE.Mesh(
+    return this.shadowed(new THREE.Mesh(
       this.geo(new RoundedBoxGeometry(it.w, it.h, it.d, 2, r)),
       itemMaterials({ ...it, color: categoryColor(it.category) })
     ));
-    return mesh;
   }
 
   buildItem(it) {
@@ -247,18 +297,20 @@ export class View3D {
 
   // --- scene build ---------------------------------------------------------
 
-  build(state, solved, visibleLayers) {
+  build(state, solved, visibleLayers, viz = null) {
     this.group.clear();
+    this.vizGroup.clear();
     for (const g of this._tempGeos) g.dispose();
     this._tempGeos = [];
     this.wallRecs = [];
     this.mountRecs = [];
+    this.tapTargets = [];
+    this.viz = viz;
     const pos = (id) => solved.pos.get(id);
-    const H = state.roomHeight || 2.6;
+    const defaultH = state.roomHeight || 2.6;
 
     const items = state.items.filter((i) => visibleLayers.has(i.layer));
 
-    // Openings to cut per wall segment: "wallId:segIndex" -> items.
     const openings = new Map();
     for (const it of items) {
       if (it.mount && (it.category === 'window' || it.category === 'door')) {
@@ -271,7 +323,8 @@ export class View3D {
     let all = [];
     for (const wall of state.walls) {
       const pts = wall.pts.map(pos).filter(Boolean);
-      if (!pts.length) continue;
+      if (pts.length < 2) continue;
+      const H = wall.height || defaultH;
       const cen = {
         x: pts.reduce((s, p) => s + p.x, 0) / pts.length,
         y: pts.reduce((s, p) => s + p.y, 0) / pts.length,
@@ -284,7 +337,6 @@ export class View3D {
         const dir = { x: (b.x - a.x) / len, y: (b.y - a.y) / len };
         const key = `${wall.id}:${i}`;
 
-        // Wall face with real openings, extruded to thickness.
         const shape = new THREE.Shape([
           new THREE.Vector2(0, 0), new THREE.Vector2(len, 0),
           new THREE.Vector2(len, H), new THREE.Vector2(0, H),
@@ -294,16 +346,13 @@ export class View3D {
           const x0 = Math.max(0.02, s - it.w / 2), x1 = Math.min(len - 0.02, s + it.w / 2);
           const y0 = Math.max(0, it.z0), y1 = Math.min(H - 0.02, it.z0 + it.h);
           if (x1 - x0 < 0.05 || y1 - y0 < 0.05) continue;
-          const hole = new THREE.Path([
+          shape.holes.push(new THREE.Path([
             new THREE.Vector2(x0, y0), new THREE.Vector2(x1, y0),
             new THREE.Vector2(x1, y1), new THREE.Vector2(x0, y1),
-          ]);
-          shape.holes.push(hole);
+          ]));
         }
         const geo = this.geo(new THREE.ExtrudeGeometry(shape, { depth: WALL_T, bevelEnabled: false }));
         const mesh = this.shadowed(new THREE.Mesh(geo, wallMaterial()));
-        // Local +x runs along the wall, +z extrudes to the plan-right of
-        // a -> b; shift by half the thickness to centre on the wall line.
         const rn = { x: dir.y, y: -dir.x };
         mesh.rotation.y = Math.atan2(dir.y, dir.x);
         mesh.position.set(a.x - rn.x * WALL_T / 2, 0, -(a.y - rn.y * WALL_T / 2));
@@ -312,11 +361,8 @@ export class View3D {
         const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
         let n = { x: -dir.y, y: dir.x };
         if ((cen.x - mid.x) * n.x + (cen.y - mid.y) * n.y > 0) n = { x: -n.x, y: -n.y };
-        // Only closed rooms get the cutaway - an open run has no inside to
-        // reveal, and fading it just makes a half-drawn survey look empty.
         this.wallRecs.push({ mesh, mid, n, key, cuttable: wall.closed });
 
-        // Skirting on the room side, skipped where a door opens.
         const hasDoor = (openings.get(key) || []).some((it) => it.category === 'door');
         if (!hasDoor && len > 0.3) {
           const skirt = new THREE.Mesh(
@@ -362,7 +408,8 @@ export class View3D {
       for (const c of itemCorners(it)) all.push(c);
     }
 
-    // Frame content + aim the sun and its shadow volume at it.
+    this.buildViz(viz);
+
     if (all.length) {
       let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
       for (const p of all) {
@@ -391,8 +438,81 @@ export class View3D {
     this.requestRender();
   }
 
-  // Fade every wall the camera is outside of - those are the ones standing
-  // between the camera and the room interior. Runs on every orbit change.
+  // Survey overlay: pins for points, pillars for candidates, floor circles
+  // and rays for the live preview. All tappable bits register tapTargets.
+  buildViz(viz) {
+    if (!viz) return;
+    for (const p of viz.points || []) {
+      const color = p.ref != null ? PIN.ref : PIN[p.style] || PIN.point;
+      const post = new THREE.Mesh(this.geoCyl, plainMaterial(color, 0.55));
+      post.scale.set(0.011, 0.42, 0.011);
+      post.position.set(p.x, 0.21, -p.y);
+      this.vizGroup.add(post);
+      const head = new THREE.Mesh(this.geoSphere, plainMaterial(color, 0.45));
+      const r = p.ref != null || p.isLast ? 0.055 : 0.042;
+      head.scale.set(r, r, r);
+      head.position.set(p.x, 0.44, -p.y);
+      this.vizGroup.add(head);
+      // generous invisible hit bubble
+      const hit = new THREE.Mesh(this.geoSphere, new THREE.MeshBasicMaterial({ visible: true, transparent: true, opacity: 0 }));
+      hit.scale.set(0.16, 0.3, 0.16);
+      hit.position.set(p.x, 0.3, -p.y);
+      this.vizGroup.add(hit);
+      this.tapTargets.push({ mesh: hit, pointId: p.id });
+    }
+    for (const g of viz.ghosts || []) {
+      const pillar = new THREE.Mesh(this.geoCyl, new THREE.MeshLambertMaterial({
+        color: PIN.ghost, transparent: true, opacity: g.primary ? 0.45 : 0.16, depthWrite: false,
+      }));
+      pillar.scale.set(0.06, 1.1, 0.06);
+      pillar.position.set(g.x, 0.55, -g.y);
+      this.vizGroup.add(pillar);
+      const hit = new THREE.Mesh(this.geoSphere, new THREE.MeshBasicMaterial({ transparent: true, opacity: 0 }));
+      hit.scale.set(0.2, 0.7, 0.2);
+      hit.position.set(g.x, 0.55, -g.y);
+      this.vizGroup.add(hit);
+      this.tapTargets.push({ mesh: hit, ghostSide: g.side });
+    }
+    for (const c of viz.circles || []) {
+      const line = new THREE.LineLoop(this.geoCircleLine, new THREE.LineBasicMaterial({ color: 0xa39d8c }));
+      line.scale.set(c.r, 1, c.r);
+      line.position.set(c.cx, 0.02, -c.cy);
+      this.vizGroup.add(line);
+    }
+    for (const s of viz.rays || []) {
+      const geo = this.geo(new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(s.x1, 0.02, -s.y1), new THREE.Vector3(s.x2, 0.02, -s.y2),
+      ]));
+      this.vizGroup.add(new THREE.Line(geo, new THREE.LineBasicMaterial({ color: 0xa39d8c })));
+    }
+  }
+
+  updateLabels() {
+    const labels = this.viz?.labels || [];
+    const seen = new Set();
+    const v = new THREE.Vector3();
+    const w = this.canvas.clientWidth, h = this.canvas.clientHeight;
+    for (const l of labels) {
+      seen.add(l.key);
+      let el = this.labelPool.get(l.key);
+      if (!el) {
+        el = document.createElement('div');
+        this.overlay.appendChild(el);
+        this.labelPool.set(l.key, el);
+      }
+      el.className = 'lbl ' + (l.cls || '');
+      el.textContent = l.text;
+      v.set(l.x, l.z ?? 0.55, -l.y).project(this.camera);
+      const sx = (v.x + 1) / 2 * w, sy = (1 - v.y) / 2 * h;
+      const off = v.z > 1 || sx < -40 || sx > w + 40 || sy < -20 || sy > h + 20;
+      el.style.display = off ? 'none' : '';
+      el.style.transform = `translate(-50%, -50%) translate(${Math.round(sx)}px, ${Math.round(sy - 16)}px)`;
+    }
+    for (const [key, el] of this.labelPool) {
+      if (!seen.has(key)) { el.remove(); this.labelPool.delete(key); }
+    }
+  }
+
   updateOcclusion() {
     const cam = { x: this.camera.position.x, y: -this.camera.position.z };
     const faded = new Set();
@@ -409,8 +529,6 @@ export class View3D {
         w.mesh.castShadow = true;
       }
     }
-    // Windows/doors vanish with their wall - a translucent ghost frame
-    // floating near the camera reads as clutter, not context.
     for (const rec of this.mountRecs) {
       const fade = faded.has(rec.key);
       if (fade === rec.faded) continue;
@@ -428,6 +546,7 @@ export class View3D {
     requestAnimationFrame(() => {
       this._dirty = false;
       this.renderer.render(this.scene, this.camera);
+      this.updateLabels();
     });
   }
 }

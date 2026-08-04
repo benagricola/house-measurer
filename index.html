@@ -18,7 +18,7 @@
     <div id="title">house measurer</div>
     <div id="gap-pill" hidden></div>
     <button id="view3d-btn" title="toggle 3D view">3D</button>
-    <button id="log-btn" title="measurement log, layers, data">log</button>
+    <button id="log-btn" title="measurements, walls, rooms, layers, export/import">data</button>
     <button id="fit" title="fit everything in view">fit</button>
     <button id="help" title="help">?</button>
   </header>
@@ -28,13 +28,16 @@
       <canvas id="plan"></canvas>
       <div id="overlay"></div>
       <div id="scalebar"></div>
+      <button id="show-work" title="show the circles behind each fixed point">circles</button>
     </div>
     <div id="view3d-wrap" hidden>
       <canvas id="plan3d"></canvas>
+      <div id="overlay3d"></div>
     </div>
 
     <section id="panel">
       <div id="status"></div>
+      <button id="close-room" style="display:none">close room</button>
       <div id="modebar">
         <button data-mode="measure">measure</button>
         <button data-mode="wall">walls</button>
@@ -52,7 +55,7 @@
         <div class="field" id="field1"><label></label><div class="val"></div><div class="interp"></div></div>
       </div>
       <div id="wallbar">
-        <button id="wall-finish">finish wall</button>
+        <button id="wall-new">new wall</button>
         <button id="wall-back">step back</button>
       </div>
       <div id="movebar">
@@ -73,7 +76,7 @@
 <div id="log-sheet" hidden>
   <div id="log-card">
     <button id="log-close">x</button>
-    <h2>log</h2>
+    <h2>data</h2>
     <div id="log-list"></div>
     <div id="import-box" hidden>
       <textarea id="import-text" placeholder="paste exported JSON here"></textarea>
@@ -117,13 +120,13 @@
     <button id="help-close">x</button>
     <h2>measuring</h2>
     <ol>
-      <li>Mark two anchor points A and B on the walls with tape. Measure A to B and type it in.</li>
-      <li>For every new point: tap 2 already-fixed points on the plan, type the measured distance to each, press OK.</li>
-      <li>Two positions match those distances - the marked one is placed. Tap the other candidate, or press flip, if it is on the wrong side.</li>
-      <li>Extra measurements between existing points: select the 2 points, type the distance, press record. Residuals show per point; edit any measurement in the log.</li>
+      <li>Mark two anchor points A and B (ideally corners) with tape. Measure A to B and type it in.</li>
+      <li>For every new point: tap 2 already-fixed points, type the measured distance to each, press OK. Two positions match - the marked one is placed; tap the other candidate or press flip if it is on the wrong side.</li>
+      <li>Until your first room is closed, each new point chains into the wall outline automatically - measure the corners in order round the room, then press <b>close room</b> and give the ceiling height. Fix a wrong link in walls mode with step back.</li>
+      <li>Extra measurements between existing points: select the 2 points, type the distance, press record. Residuals show per point; edit any measurement in the data sheet. The <b>circles</b> button shows how any point was fixed.</li>
     </ol>
     <h2>walls, items, 3D</h2>
-    <p>In <b>walls</b> mode tap points in order; tapping the first point again closes the room. In <b>items</b> mode create an item, then place it by two measured distances to a corner, on a wall (offset from a wall end), or drop it and drag in <b>move</b> mode. The 3D button shows everything extruded at real heights.</p>
+    <p>After the first room, walls are manual: in <b>walls</b> mode tap points in order (first point again closes; each room keeps its own ceiling height). In <b>items</b> mode create an item, then place it by two distances to a corner (or tap existing points as corners), on a wall, or drop it and drag in <b>move</b> mode. Measuring also works inside the 3D view - the survey pins are tappable there.</p>
     <h2>units</h2>
     <p>A number with a decimal point is metres, without is centimetres: <b>342</b> = 3.42 m, <b>3.42</b> = 3.42 m, <b>84</b> = 84 cm, <b>15.</b> = 15 m.</p>
     <h2>keys</h2>

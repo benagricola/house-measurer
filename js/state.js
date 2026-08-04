@@ -121,24 +121,34 @@ export class Store {
 
   // --- points & measurements ----------------------------------------------
 
-  setAnchors(d) {
+  // First measurement: creates anchors A and B, and (unless told otherwise)
+  // starts the wall run that auto-chains points until the first room closes.
+  setAnchors(d, { wall = true } = {}) {
     const a = this.nextId++, b = this.nextId++, m = this.nextId++;
+    const wallId = wall ? this.nextId++ : null;
     this.commit((s) => {
       s.points.push(
         { id: a, name: 'A', fix: null },
         { id: b, name: 'B', fix: null }
       );
       s.measurements.push({ id: m, p: a, q: b, d });
+      if (wall) s.walls.push({ id: wallId, pts: [a, b], closed: false });
     });
-    return { a, b };
+    return { a, b, wallId };
   }
 
-  addPoint(r1, r2, d1, d2, side) {
+  // appendWall: id of an open wall run to extend with the new point in the
+  // same undo step (the auto-walling before the first room closes).
+  addPoint(r1, r2, d1, d2, side, { appendWall = null } = {}) {
     const id = this.nextId++, m1 = this.nextId++, m2 = this.nextId++;
     this.commit((s) => {
       s.points.push({ id, name: pointName(s.points.length), fix: { r1, r2, side } });
       s.measurements.push({ id: m1, p: r1, q: id, d: d1 });
       s.measurements.push({ id: m2, p: r2, q: id, d: d2 });
+      if (appendWall != null) {
+        const w = s.walls.find((w) => w.id === appendWall);
+        if (w && !w.closed && !w.pts.includes(id)) w.pts.push(id);
+      }
     });
     return id;
   }
@@ -205,6 +215,31 @@ export class Store {
       else w.pts.pop();
       if (!w.pts.length) s.walls = s.walls.filter((x) => x.id !== wallId);
     });
+  }
+
+  closeWall(id) {
+    const wall = this.wall(id);
+    if (!wall || wall.closed || wall.pts.length < 3) return false;
+    this.commit((s) => { s.walls.find((w) => w.id === id).closed = true; });
+    return true;
+  }
+
+  // Ceiling height for one room (closed wall loop), metres.
+  setWallHeight(id, h) {
+    this.commit((s) => {
+      const w = s.walls.find((w) => w.id === id);
+      if (w) w.height = h;
+    });
+  }
+
+  // True once any room is closed - after that, new points are unspecified.
+  get hasClosedRoom() {
+    return this.state.walls.some((w) => w.closed);
+  }
+
+  // The open wall run that auto-chaining extends, if any.
+  openWall() {
+    return this.state.walls.find((w) => !w.closed && w.pts.length >= 1) || null;
   }
 
   deleteWall(id) {

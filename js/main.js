@@ -40,6 +40,22 @@ const plan = new PlanView($('plan'), $('overlay'), $('scalebar'), {
 });
 let view3d = null; // created lazily on first 3D toggle
 
+function handleTap3D({ pointId, ghostSide, world }) {
+  if (ghostSide != null && twoFieldFlow()) return void commitPoint(ghostSide);
+  if (pointId != null) {
+    if (ui.mode === 'wall') {
+      const r = store.addWallPoint(ui.activeWallId, pointId);
+      ui.activeWallId = r.closed ? null : r.wallId;
+      if (r.closed) return roomClosed(r.wallId);
+      return say('Wall: tap the next point (first point again closes)');
+    }
+    if (twoFieldFlow()) {
+      if (cornerFromPoint(pointId)) return;
+      return toggleRef(pointId);
+    }
+  }
+}
+
 // --- helpers ---------------------------------------------------------------
 
 const anchorMode = () => store.state.points.length === 0;
@@ -204,7 +220,69 @@ function commitAnchor() {
   ui.fields = ['', ''];
   ui.active = 0;
   plan.fitAll([...store.solved.pos.values()]);
-  say('A and B fixed. Tap 2 reference points, type the 2 distances.');
+  say('A-B fixed and walling started. Measure the corners in order round the room.');
+}
+
+// Explain WHY two circles cannot meet, with the numbers and a way out.
+function gapExplain(c, d1, d2) {
+  const n1 = store.point(ui.refs[0])?.name ?? 'ref 1';
+  const n2 = store.point(ui.refs[1])?.name ?? 'ref 2';
+  const p1 = pos(ui.refs[0]), p2 = pos(ui.refs[1]);
+  const sep = Math.hypot(p2.x - p1.x, p2.y - p1.y);
+  if (d1 + d2 < sep) {
+    return `Too short by ${(c.gap * 100).toFixed(1)} cm: ${fmtDist(d1)} + ${fmtDist(d2)} cannot span the ${fmtDist(sep)} between ${n1} and ${n2}. Re-measure, or check a cm/m mix-up.`;
+  }
+  return `${fmtDist(Math.max(d1, d2))} overshoots: it is more than the distance ${n1} to ${n2} (${fmtDist(sep)}) plus the other reading. One value is too long - re-measure it.`;
+}
+
+// A room has just been closed: ask for its ceiling height on the keypad.
+function roomClosed(wallId) {
+  const h = store.wall(wallId)?.height || store.state.roomHeight || 2.6;
+  startFlow({ kind: 'room-height', wallId },
+    `Room closed. Ceiling height in cm? OK keeps ${Math.round(h * 100)} cm.`);
+}
+
+function closeRoomAction() {
+  const wall = store.openWall();
+  if (!wall || wall.pts.length < 3) return say('Need at least 3 points in the wall run first', 'warn');
+  store.closeWall(wall.id);
+  ui.activeWallId = null;
+  roomClosed(wall.id);
+}
+
+// In the item corner flows, tapping an already-fixed point uses that point
+// as the corner directly - but only once both reference slots are filled
+// and nothing is typed, so ref selection by tapping still works.
+function cornerFromPoint(pid) {
+  if (!(ui.flow?.kind === 'item-c1' || ui.flow?.kind === 'item-c2')) return false;
+  if (ui.refs.length < 2) return false;
+  if (parseDistance(ui.fields[0]) != null || parseDistance(ui.fields[1]) != null) return false;
+  const p = pos(pid);
+  if (!p) return false;
+  acceptCorner({ x: p.x, y: p.y });
+  return true;
+}
+
+// Shared corner-transition for item flows: called with a resolved position.
+function acceptCorner(c) {
+  if (ui.flow.kind === 'item-c1') {
+    ui.flow = { kind: 'item-c2', draft: ui.flow.draft, c1: c };
+    ui.fields = ['', ''];
+    ui.active = 0;
+    ui.flowSide = 1;
+    say('Corner 2: distances, tap a point or wall, or OK to use item width');
+    return;
+  }
+  const dx = c.x - ui.flow.c1.x, dy = c.y - ui.flow.c1.y;
+  const wEff = Math.hypot(dx, dy);
+  if (wEff < 0.02) return say('Corners coincide - measure the far corner', 'warn');
+  ui.flow = {
+    kind: 'item-side', draft: ui.flow.draft, c1: ui.flow.c1,
+    dir: { x: dx / wEff, y: dy / wEff }, wEff,
+  };
+  ui.fields = ['', ''];
+  ui.flowSide = 1;
+  say('Tap the rectangle that matches reality (flip swaps), OK commits');
 }
 
 function commitPoint(side) {
@@ -217,37 +295,24 @@ function commitPoint(side) {
   }
   const c = circleIntersect(pos(ui.refs[0]), d1, pos(ui.refs[1]), d2);
   if (!c.ok) return say('Reference points coincide', 'warn');
-  if (c.gap > CLAMP_TOL) {
-    return say(`Circles miss by ${(c.gap * 100).toFixed(1)} cm - check the two distances`, 'err');
-  }
+  if (c.gap > CLAMP_TOL) return say(gapExplain(c, d1, d2), 'err');
   // Corner flows share the two-distance commit path.
-  if (ui.flow?.kind === 'item-c1') {
-    ui.flow = { kind: 'item-c2', draft: ui.flow.draft, c1: side >= 0 ? c.left : c.right };
-    ui.fields = ['', ''];
-    ui.active = 0;
-    ui.flowSide = 1;
-    return say('Corner 2: two distances, or tap a wall to align, or OK to use item width');
-  }
-  if (ui.flow?.kind === 'item-c2') {
-    const c2 = side >= 0 ? c.left : c.right;
-    const dx = c2.x - ui.flow.c1.x, dy = c2.y - ui.flow.c1.y;
-    const wEff = Math.hypot(dx, dy);
-    if (wEff < 0.02) return say('Corners coincide - measure the far corner', 'warn');
-    ui.flow = {
-      kind: 'item-side', draft: ui.flow.draft, c1: ui.flow.c1,
-      dir: { x: dx / wEff, y: dy / wEff }, wEff,
-    };
-    ui.fields = ['', ''];
-    ui.flowSide = 1;
-    return say('Tap the rectangle that matches reality (flip swaps), OK commits');
+  if (ui.flow?.kind === 'item-c1' || ui.flow?.kind === 'item-c2') {
+    return acceptCorner(side >= 0 ? c.left : c.right);
   }
   const name = pointName(store.state.points.length);
-  ui.lastId = store.addPoint(ui.refs[0], ui.refs[1], d1, d2, side);
+  // Until the first room is closed, new points chain straight into the
+  // wall run - measuring the room IS drawing it.
+  const autoWall = !store.hasClosedRoom ? store.openWall() : null;
+  ui.lastId = store.addPoint(ui.refs[0], ui.refs[1], d1, d2, side, { appendWall: autoWall?.id });
   ui.fields = ['', ''];
   ui.active = 0;
   const p = pos(ui.lastId);
   if (p && !plan.isOnScreen(p.x, p.y)) plan.fitAll([...store.solved.pos.values()]);
-  say(`${name} placed - flip if it is on the wrong side`, 'good');
+  const wallHint = autoWall && (autoWall.pts.length >= 3)
+    ? ' - "close room" when you are back at the start'
+    : '';
+  say(`${name} placed - flip if it is on the wrong side${wallHint}`, 'good');
 }
 
 function commitCheck() {
@@ -274,8 +339,6 @@ function pressKey(key) {
       if (!f[ui.active].includes('.')) f[ui.active] += '.';
     } else if (key === 'del') {
       f[ui.active] = f[ui.active].slice(0, -1);
-    } else if (key === 'clear') {
-      f[ui.active] = '';
     }
   }
 
@@ -316,6 +379,13 @@ function pressOk() {
     store.updateMeasurement(ui.flow.measId, v);
     return endFlow('Measurement updated', 'good');
   }
+  if (ui.flow?.kind === 'room-height') {
+    const v = parseDistance(ui.fields[0]);
+    const wallId = ui.flow.wallId;
+    if (v != null) store.setWallHeight(wallId, v);
+    const h = store.wall(wallId)?.height || store.state.roomHeight || 2.6;
+    return endFlow(`Ceiling ${Math.round(h * 100)} cm for this room`, 'good');
+  }
   if (ui.flow?.kind === 'item-c2' && parseDistance(ui.fields[0]) == null && parseDistance(ui.fields[1]) == null) {
     // Keep the item's own width, axis-aligned; rotate/drag later.
     ui.flow = { kind: 'item-side', draft: ui.flow.draft, c1: ui.flow.c1, dir: { x: 1, y: 0 }, wEff: ui.flow.draft.w };
@@ -345,7 +415,8 @@ function handleTap(world, screen) {
     if (pid == null) return false;
     const r = store.addWallPoint(ui.activeWallId, pid);
     ui.activeWallId = r.closed ? null : r.wallId;
-    say(r.closed ? 'Room outline closed' : 'Wall: tap the next point (first point again closes)', r.closed ? 'good' : '');
+    if (r.closed) roomClosed(r.wallId);
+    else say('Wall: tap the next point (first point again closes)');
     return true;
   }
 
@@ -415,6 +486,7 @@ function handleTap(world, screen) {
     }
     const pid = hitPoint(screen);
     if (pid != null) {
+      if (cornerFromPoint(pid)) return true;
       toggleRef(pid);
       return true;
     }
@@ -590,20 +662,28 @@ function renderLog() {
     row.querySelector('[data-act="del"]').addEventListener('click', () => { store.deleteMeasurement(m.id); });
   }
 
-  section('walls');
-  if (!store.state.walls.length) addRow('<span class="dim">none yet - wall mode, tap points in order</span>');
+  section('walls and rooms');
+  if (!store.state.walls.length) addRow('<span class="dim">none yet - points auto-chain into walls until a room closes</span>');
   for (const w of store.state.walls) {
     const names = w.pts.map((id) => store.point(id)?.name ?? '?').join('-');
+    const h = Math.round((w.height || store.state.roomHeight || 2.6) * 100);
     const row = addRow(
-      `<span class="log-name">${names}${w.closed ? ' (closed)' : ''}</span><button data-act="del">x</button>`
+      `<span class="log-name">${names}${w.closed ? ` <span class="dim">room, ceiling ${h} cm</span>` : ' <span class="dim">open run</span>'}</span>` +
+      (w.closed ? `<button data-act="height">ceiling</button>` : '') +
+      `<button data-act="del">x</button>`
     );
+    row.querySelector('[data-act="height"]')?.addEventListener('click', () => {
+      $('log-sheet').hidden = true;
+      startFlow({ kind: 'room-height', wallId: w.id },
+        `Ceiling height for ${names} in cm (now ${h} cm)`);
+    });
     row.querySelector('[data-act="del"]').addEventListener('click', () => { store.deleteWall(w.id); });
   }
 
   section('layers');
   for (const l of store.state.layers) {
     const row = addRow(
-      `<button data-act="vis" class="${l.visible ? '' : 'off'}">${l.visible ? 'shown' : 'hidden'}</button>` +
+      `<button data-act="vis" class="${l.visible ? 'vis-on' : 'vis-off'}">${l.visible ? 'shown' : 'hidden'}</button>` +
       `<span class="log-name ${store.state.activeLayer === l.id ? 'active-layer' : ''}">${l.name}</span>` +
       `<button data-act="use">${store.state.activeLayer === l.id ? 'active' : 'use'}</button>` +
       (l.id !== 'current' ? `<button data-act="del">x</button>` : '')
@@ -620,9 +700,8 @@ function renderLog() {
     if (name) store.addLayer(name);
   });
 
-  section('room');
   const hRow = addRow(
-    `<span class="log-name">ceiling height</span>` +
+    `<span class="log-name">default ceiling for new rooms</span>` +
     `<input id="room-h" type="number" value="${Math.round((store.state.roomHeight || 2.6) * 100)}"> cm ` +
     `<button data-act="set">set</button>`
   );
@@ -694,13 +773,15 @@ function fieldLabel(i) {
     const m = store.measurement(ui.flow.measId);
     return i === 0 ? `${store.point(m?.p)?.name ?? '?'} to ${store.point(m?.q)?.name ?? '?'}` : '';
   }
+  if (ui.flow?.kind === 'room-height') return i === 0 ? 'ceiling height' : '';
   const id = ui.refs[i];
   return id ? `to ${store.point(id).name}` : `to ref ${i + 1}`;
 }
 
 function renderPanel() {
   const anchor = anchorMode();
-  const oneField = ui.flow?.kind === 'item-walloffset' || ui.flow?.kind === 'edit-meas';
+  const oneField = ui.flow?.kind === 'item-walloffset' || ui.flow?.kind === 'edit-meas'
+    || ui.flow?.kind === 'room-height';
   const noFields = ui.flow?.kind === 'item-side' || ui.flow?.kind === 'item-wallmount';
   const showKeypad = ui.mode === 'measure' || anchor || ui.flow;
   const showFields = showKeypad && !noFields;
@@ -739,6 +820,12 @@ function renderPanel() {
     }
     $('check-btn').style.display = ui.refs.length === 2 && !ui.flow ? '' : 'none';
   }
+  // "close room" appears while a wall run with 3+ points is waiting.
+  const open = store.openWall();
+  const closable = !ui.flow && open && open.pts.length >= 3;
+  $('close-room').style.display = closable && (ui.mode === 'measure' || ui.mode === 'wall') ? '' : 'none';
+  $('wall-new').disabled = !ui.activeWallId && !open;
+  $('show-work').classList.toggle('on', !!ui.showWork);
 
   // Move-mode chips.
   if (ui.mode === 'move' && !ui.flow) {
@@ -789,7 +876,7 @@ function renderPanel() {
     else {
       const pv = preview();
       if (pv && pv.cands && pv.cands.gap > CLAMP_TOL) {
-        msg = { text: `Circles miss by ${(pv.cands.gap * 100).toFixed(1)} cm`, cls: 'err' };
+        msg = { text: gapExplain(pv.cands, pv.d1, pv.d2), cls: 'err' };
       } else if (pv && pv.cands) {
         msg = { text: 'OK places the marked candidate - or tap the other one', cls: '' };
       } else {
@@ -932,6 +1019,29 @@ function renderPlan() {
     }
   }
 
+  // "Show working": construction circles for an existing point - the last
+  // placed one, or a single selected point. Explains how a fix was solved.
+  if (ui.showWork && !(pv && pv.cands)) {
+    let target = null;
+    if (ui.refs.length === 1 && store.point(ui.refs[0])?.fix) target = store.point(ui.refs[0]);
+    else if (ui.lastId && store.point(ui.lastId)?.fix) target = store.point(ui.lastId);
+    if (target) {
+      const tp = pos(target.id);
+      const dist = (a, b) => store.state.measurements.find(
+        (m) => (m.p === a && m.q === b) || (m.p === b && m.q === a))?.d;
+      for (const [i, rid] of [[0, target.fix.r1], [1, target.fix.r2]]) {
+        const rp = pos(rid), d = dist(rid, target.id);
+        if (!rp || d == null || !tp) continue;
+        content.circles.push({ cx: rp.x, cy: rp.y, r: d });
+        content.segments.push({ x1: rp.x, y1: rp.y, x2: tp.x, y2: tp.y, style: 'ray' });
+        content.labels.push({
+          key: `wk${i}`, x: (rp.x + tp.x) / 2, y: (rp.y + tp.y) / 2,
+          text: fmtDist(d), cls: 'ray',
+        });
+      }
+    }
+  }
+
   // Flow previews beyond the two-distance stage.
   if (ui.flow?.kind === 'item-c2') {
     content.ghosts.push({ x: ui.flow.c1.x, y: ui.flow.c1.y, primary: true });
@@ -964,11 +1074,51 @@ function renderPlan() {
   plan.update(content);
 }
 
+// Survey overlay for the 3D view: points, candidates, circles, rays and
+// labels, so measuring works without leaving 3D.
+function surveyViz() {
+  const viz = { points: [], ghosts: [], circles: [], rays: [], labels: [] };
+  for (const pt of store.state.points) {
+    const p = pos(pt.id);
+    if (!p) continue;
+    const refIdx = ui.refs.indexOf(pt.id);
+    viz.points.push({
+      id: pt.id, x: p.x, y: p.y,
+      style: pt.fix ? 'point' : 'anchor',
+      ref: refIdx >= 0 ? refIdx : null,
+      isLast: pt.id === ui.lastId,
+    });
+    viz.labels.push({ key: `p${pt.id}`, x: p.x, y: p.y, z: 0.52, text: pt.name, cls: 'name' });
+  }
+  const pv = preview();
+  if (pv) {
+    const [r1, r2] = ui.refs.map(pos);
+    if (pv.d1 != null) viz.circles.push({ cx: r1.x, cy: r1.y, r: pv.d1 });
+    if (pv.d2 != null) viz.circles.push({ cx: r2.x, cy: r2.y, r: pv.d2 });
+    if (pv.cands && pv.cands.gap <= CLAMP_TOL) {
+      const name = pointName(store.state.points.length);
+      for (const [side, p] of [[+1, pv.cands.left], [-1, pv.cands.right]]) {
+        const primary = side === (ui.flow ? ui.flowSide : 1);
+        viz.ghosts.push({ x: p.x, y: p.y, side, primary });
+        viz.labels.push({
+          key: `gh${side}`, x: p.x, y: p.y, z: 1.15,
+          text: primary ? `${name}?` : 'or here',
+          cls: primary ? 'ghost' : 'ghost dim',
+        });
+      }
+      const t = (ui.flow ? ui.flowSide : 1) >= 0 ? pv.cands.left : pv.cands.right;
+      viz.rays.push({ x1: r1.x, y1: r1.y, x2: t.x, y2: t.y });
+      viz.rays.push({ x1: r2.x, y1: r2.y, x2: t.x, y2: t.y });
+    }
+  }
+  return viz;
+}
+
 function render() {
   validateUi();
   renderPanel();
   if (ui.view === '3d') {
-    if (view3d) view3d.build(store.state, store.solved, visibleLayers());
+    if (view3d) view3d.build(store.state, store.solved, visibleLayers(), surveyViz());
   } else {
     renderPlan();
   }
@@ -978,18 +1128,20 @@ function render() {
 // --- boot ------------------------------------------------------------------
 
 function buildKeypad() {
+  // [key, label, gridArea] - del is double-height (no cryptic C key).
   const keys = [
-    ['1', '1'], ['2', '2'], ['3', '3'], ['del', 'del'],
-    ['4', '4'], ['5', '5'], ['6', '6'], ['clear', 'C'],
-    ['7', '7'], ['8', '8'], ['9', '9'], ['ok', 'OK'],
-    ['.', '.'], ['0', '0'], ['flip', 'flip'],
+    ['1', '1', '1/1'], ['2', '2', '1/2'], ['3', '3', '1/3'], ['del', 'del', '1/4/3/5'],
+    ['4', '4', '2/1'], ['5', '5', '2/2'], ['6', '6', '2/3'],
+    ['7', '7', '3/1'], ['8', '8', '3/2'], ['9', '9', '3/3'], ['ok', 'OK', '3/4/5/5'],
+    ['.', '.', '4/1'], ['0', '0', '4/2'], ['flip', 'flip', '4/3'],
   ];
   const pad = $('keypad');
-  for (const [key, label] of keys) {
+  for (const [key, label, area] of keys) {
     const b = document.createElement('button');
     b.dataset.key = key;
     b.textContent = label;
-    b.className = 'key ' + (/^[0-9.]$/.test(key) ? 'digit' : key === '.' ? 'digit' : key);
+    b.className = 'key ' + (/^[0-9.]$/.test(key) ? 'digit' : key);
+    b.style.gridArea = area.split('/').join(' / ');
     b.addEventListener('pointerdown', (e) => e.preventDefault());
     b.addEventListener('click', () => pressKey(key));
     pad.appendChild(b);
@@ -1030,7 +1182,7 @@ function toggle3D() {
   $('view3d-wrap').hidden = ui.view !== '3d';
   $('canvas-wrap').classList.toggle('behind', ui.view === '3d');
   if (ui.view === '3d') {
-    if (!view3d) view3d = new View3D($('plan3d'));
+    if (!view3d) view3d = new View3D($('plan3d'), $('overlay3d'), { onTap: handleTap3D });
     view3d.refit();
     view3d.resize();
   }
@@ -1059,10 +1211,21 @@ for (const b of document.querySelectorAll('#modebar button')) {
   b.addEventListener('click', () => setMode(b.dataset.mode));
 }
 
-$('wall-finish').addEventListener('click', () => { ui.activeWallId = null; say('Wall finished'); });
+$('wall-new').addEventListener('click', () => {
+  ui.activeWallId = null;
+  say('Next tapped point starts a separate wall run');
+});
 $('wall-back').addEventListener('click', () => {
-  if (ui.activeWallId) store.popWallPoint(ui.activeWallId);
+  // Steps back the wall being drawn; on a closed room it re-opens the loop.
+  const w = (ui.activeWallId && store.wall(ui.activeWallId))
+    || store.openWall() || store.state.walls.at(-1);
+  if (w) store.popWallPoint(w.id);
   else store.undo();
+});
+$('close-room').addEventListener('click', closeRoomAction);
+$('show-work').addEventListener('click', () => {
+  ui.showWork = !ui.showWork;
+  say(ui.showWork ? 'Showing how points were fixed - tap a single point to inspect it' : null);
 });
 
 $('check-btn').addEventListener('click', commitCheck);

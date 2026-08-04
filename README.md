@@ -8,22 +8,31 @@ client-side, state in localStorage, no build step.
 
 ## Measuring
 
-1. Mark two anchor points A and B on the walls with tape crosses. Measure
-   A to B, type it in, press OK. The tool renders the baseline immediately.
-2. For each new point: tap two already-fixed points on the plan, type the
-   measured distance to each, press OK (OK on the first field jumps to the
-   second). Both candidate positions are shown while you type - OK places
-   the marked one, tapping the other candidate places that one instead, and
-   the flip key swaps the last point afterwards.
-3. Any fixed point can serve as a reference for later points, so the mesh
-   grows across the room. The reference pair is kept after each commit, so
-   fixing several points from the same pair needs no extra taps.
+1. Mark two anchor points A and B (ideally room corners) with tape crosses.
+   Measure A to B, type it in, press OK. The baseline renders immediately
+   and starts the wall outline.
+2. For each new point: tap two already-fixed points, type the measured
+   distance to each, press OK (OK on the first field jumps to the second).
+   Both candidate positions are shown while you type - OK places the marked
+   one, tapping the other candidate places that one instead, and the flip
+   key swaps the last point afterwards.
+3. Until the first room is closed, every committed point chains into the
+   wall outline automatically - measure the corners in order round the
+   room, then press **close room** and type the ceiling height (stored per
+   room; each closed loop keeps its own). A wrong chain link is fixed in
+   walls mode with step back. After the first room, new points are
+   unspecified and walls are drawn explicitly.
 4. Redundancy: select two existing points, type the measured distance,
    press **record**. All positions are least-squares adjusted over every
    measurement; residuals show per point on the plan and per measurement in
-   the log (green < 1 cm, amber < 3 cm, red beyond). Nothing is silently
-   discarded - every measurement can be edited or deleted in the log and
-   the solution recomputes live.
+   the data sheet (green < 1 cm, amber < 3 cm, red beyond). Nothing is
+   silently discarded - every measurement can be edited or deleted there
+   and the solution recomputes live. The **circles** button on the plan
+   shows the construction (two circles + rays) behind the last point, or
+   any single selected point.
+5. Measuring also works inside the 3D view: the survey pins are tappable
+   as references, candidates appear as pillars, and the measurement
+   circles draw across the floor.
 
 Units: a number **with** a decimal point is metres, **without** is
 centimetres. `342` = 3.42 m, `3.42` = 3.42 m, `84` = 84 cm. For a whole
@@ -60,8 +69,13 @@ commit.
   walls stand between the camera and the room interior fade to translucent
   as you orbit (windows and doors in a faded wall hide with it), so the
   inside is always visible.
-- The **log** sheet also exports/imports the full state as JSON (download,
-  copy to clipboard, paste or file) for backup and moving between devices.
+- The **data** sheet is the interface to everything recorded: measurements
+  (edit/delete with live residuals), walls and rooms (per-room ceiling
+  heights), layers, and JSON export/import (download, copy to clipboard,
+  paste or file) for backup and moving between devices. Multiple rooms are
+  just multiple closed loops - measure through doorways to chain the next
+  room's points off the first room's, and the gap between back-to-back
+  walls is simply whatever you measure it to be.
 
 Every commit is undoable (undo history survives reloads) and everything
 autosaves to localStorage on every change. "clear everything" lives behind
