@@ -495,7 +495,8 @@ await js(`[...document.querySelectorAll('#log-list [data-act="add"]')].at(0).cli
 st = await state();
 assert(st.layers.length === 2 && st.activeLayer !== 'current', 'proposal layer added and active');
 const visUi = await js(`(() => {
-  const pills = [...document.querySelectorAll('#log-list .pill')].map(p => p.textContent);
+  const rows = [...document.querySelectorAll('#log-list .log-row')].filter(r => r.querySelector('[data-act="vis"]'));
+  const pills = rows.map(r => r.querySelector('.pill')?.textContent ?? '');
   const btns = [...document.querySelectorAll('#log-list [data-act="vis"]')].map(b => b.textContent);
   return { pills, btns };
 })()`);
