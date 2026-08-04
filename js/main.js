@@ -40,8 +40,15 @@ const plan = new PlanView($('plan'), $('overlay'), $('scalebar'), {
 });
 let view3d = null; // created lazily on first 3D toggle
 
-function handleTap3D({ pointId, ghostSide, world }) {
+function handleTap3D({ pointId, ghostSide, roomHeightWall, world }) {
   if (ghostSide != null && twoFieldFlow()) return void commitPoint(ghostSide);
+  if (roomHeightWall != null) {
+    const w = store.wall(roomHeightWall);
+    if (!w) return;
+    const h = Math.round((w.height || store.state.roomHeight || 2.6) * 100);
+    return startFlow({ kind: 'room-height', wallId: w.id },
+      `Ceiling height for this room in cm (now ${h} cm)`);
+  }
   if (pointId != null) {
     if (ui.mode === 'wall') {
       const r = store.addWallPoint(ui.activeWallId, pointId);
@@ -350,12 +357,28 @@ function commitCheck() {
   if (offFloorRefs().length) return say('Both points must be on this floor (cross-floor laser shots are slant distances)', 'warn');
   const v = parseDistance(ui.fields[ui.active]) ?? parseDistance(ui.fields[0]);
   if (v == null) return say('Type the measured distance first', 'warn');
+  const [n1, n2] = ui.refs.map((id) => store.point(id).name);
+  // Sanity-check against the current solution: a reading far off the solved
+  // distance is almost always a typo or a cm/m mix-up, and committing it
+  // would drag every point toward a compromise. Ask before accepting.
+  const p1 = pos(ui.refs[0]), p2 = pos(ui.refs[1]);
+  const predicted = Math.hypot(p2.x - p1.x, p2.y - p1.y);
+  const diff = Math.abs(v - predicted);
+  const armKey = `${ui.refs[0]}:${ui.refs[1]}:${v}`;
+  if (diff > 0.15 && ui.checkArm !== armKey) {
+    ui.checkArm = armKey;
+    return say(`${n1} to ${n2} currently solves to ${fmtDist(predicted)}, but you typed ${fmtDist(v)} - ${(diff * 100).toFixed(0)} cm apart. Typo or cm/m mix-up? Press record again to keep it anyway.`, 'err');
+  }
+  ui.checkArm = null;
   const id = store.addMeasurement(ui.refs[0], ui.refs[1], v);
   const r = (store.solved.mres.get(id) || 0) * 100;
   ui.fields = ['', ''];
   ui.active = 0;
-  const cls = Math.abs(r) < 1 ? 'good' : Math.abs(r) < 3 ? 'warn' : 'err';
-  say(`Check recorded - residual ${r.toFixed(1)} cm`, cls);
+  if (Math.abs(r) >= 3) {
+    say(`Check recorded, but it disagrees by ${Math.abs(r).toFixed(1)} cm - all points have shifted to a compromise. If it was wrong, delete or edit it in data.`, 'err');
+  } else {
+    say(`Check recorded - residual ${r.toFixed(1)} cm`, Math.abs(r) < 1 ? 'good' : 'warn');
+  }
 }
 
 // --- keypad ----------------------------------------------------------------
@@ -843,7 +866,7 @@ function renderLog() {
 
 function exportString() {
   return JSON.stringify({
-    app: 'house-measurer', version: 2,
+    app: 'house-measurer', version: store.state.v,
     exported: new Date().toISOString(),
     state: store.state,
   }, null, 1);
@@ -1218,9 +1241,32 @@ function renderPlan() {
 // Survey overlay for the 3D view: points, candidates, circles, rays and
 // labels, so measuring works without leaving 3D.
 function surveyViz() {
-  const viz = { points: [], ghosts: [], circles: [], rays: [], labels: [] };
+  const viz = { points: [], ghosts: [], circles: [], rays: [], labels: [], heights: [] };
   const elev = (fid) => store.floor(fid)?.elevation ?? 0;
   const activeE = elev(activeFloor());
+  // Ceiling markers: a vertical dimension at each room's first corner,
+  // tappable to edit that room's height.
+  for (const wall of store.state.walls) {
+    if (!wall.closed || !floorVisible(wall.floor)) continue;
+    const p = pos(wall.pts[0]);
+    if (!p) continue;
+    // Nudge the marker into the room so it does not sit inside the walls.
+    const solvedPts = wall.pts.map(pos).filter(Boolean);
+    const cen = {
+      x: solvedPts.reduce((s, q) => s + q.x, 0) / solvedPts.length,
+      y: solvedPts.reduce((s, q) => s + q.y, 0) / solvedPts.length,
+    };
+    const dl = Math.hypot(cen.x - p.x, cen.y - p.y) || 1;
+    const mx = p.x + ((cen.x - p.x) / dl) * 0.22;
+    const my = p.y + ((cen.y - p.y) / dl) * 0.22;
+    const e = elev(wall.floor);
+    const h = wall.height || store.state.roomHeight || 2.6;
+    viz.heights.push({ x: mx, y: my, e, h, wallId: wall.id });
+    viz.labels.push({
+      key: `wh${wall.id}`, x: mx, y: my, z: e + h / 2,
+      text: `${Math.round(h * 100)} cm`, cls: 'ray',
+    });
+  }
   for (const pt of store.state.points) {
     const p = pos(pt.id);
     if (!p || !floorVisible(pt.floor)) continue;

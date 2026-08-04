@@ -310,6 +310,20 @@ await key('ok');
 st = await state();
 assert(near(st.measurements.at(-1).d, 3.0), 'measurement edited via data sheet + keypad');
 
+// A wildly-off check is challenged before it can poison the survey.
+await keys(['5', '0', '0']); // 5 m against the true 3.00 m
+await click('#check-btn');
+assert((await state()).measurements.length === 6, 'off-by-2m check held back on first press');
+let chkStatus = await js(`document.getElementById('status').textContent`);
+assert(/again to keep/.test(chkStatus) && /apart/.test(chkStatus), `record guard explains itself (${chkStatus.slice(0, 60)}...)`);
+await click('#check-btn'); // insist
+st = await state();
+assert(st.measurements.length === 7, 'second press records it anyway');
+chkStatus = await js(`document.getElementById('status').textContent`);
+assert(/disagrees|compromise/.test(chkStatus), 'post-commit message names the damage');
+await click('#undo');
+assert((await state()).measurements.length === 6, 'undo removes the bad check');
+
 // --- items ------------------------------------------------------------------
 await click('#modebar [data-mode="item"]');
 await click('#item-new');
@@ -522,6 +536,25 @@ st = await state();
 assert(st.points.length === 5, 'point committed from inside 3D');
 await click('#undo');
 assert((await state()).points.length === 4, 'undo removes the 3D-placed point');
+
+// The ceiling dimension marker opens the height editor directly.
+assert(await js('window.app.view3d.tapTargets.some(t => t.roomHeightWall != null)'), 'ceiling marker tappable in 3D');
+await settleFrame();
+const hm = await js(`(() => {
+  const v = window.app.view3d;
+  const rec = v.tapTargets.find(t => t.roomHeightWall != null);
+  const r = document.getElementById('plan3d').getBoundingClientRect();
+  const vec = rec.mesh.position.clone();
+  vec.project(v.camera);
+  return { x: Math.round(r.left + (vec.x + 1) / 2 * r.width), y: Math.round(r.top + (1 - vec.y) / 2 * r.height) };
+})()`);
+await tapAtRaw(hm.x, hm.y);
+assert(await js('window.app.ui.flow?.kind') === 'room-height', 'marker tap opens the ceiling editor');
+await keys(['2', '7', '0']);
+await key('ok');
+assert(near((await state()).walls[0].height, 2.7), 'ceiling edited from the 3D marker');
+await click('#undo');
+assert(near((await state()).walls[0].height, 2.5), 'undo restores the ceiling');
 await shot('09-3d');
 await click('#view3d-btn');
 assert(await js('window.app.ui.view') === 'plan', 'back to plan');

@@ -142,7 +142,7 @@ export class View3D {
       const hits = this.raycaster.intersectObjects(this.tapTargets.map((t) => t.mesh), false);
       if (hits.length) {
         const rec = this.tapTargets.find((t) => t.mesh === hits[0].object);
-        this.cb.onTap({ pointId: rec.pointId, ghostSide: rec.ghostSide });
+        this.cb.onTap({ pointId: rec.pointId, ghostSide: rec.ghostSide, roomHeightWall: rec.roomHeightWall });
         return;
       }
       const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
@@ -524,6 +524,27 @@ export class View3D {
       line.scale.set(c.r, 1, c.r);
       line.position.set(c.cx, (c.e || 0) + 0.02, -c.cy);
       this.vizGroup.add(line);
+    }
+    // Room-height dimension markers: floor-to-ceiling rule at the room's
+    // first corner; tap to edit the ceiling height.
+    for (const hm of viz.heights || []) {
+      const mat = plainMaterial(0x6a6456, 0.6, 0);
+      const rule = new THREE.Mesh(this.geoCyl, mat);
+      rule.scale.set(0.008, hm.h, 0.008);
+      rule.position.set(hm.x, hm.e + hm.h / 2, -hm.y);
+      this.vizGroup.add(rule);
+      for (const ty of [hm.e + 0.005, hm.e + hm.h]) {
+        const tick = new THREE.Mesh(this.geoCyl, mat);
+        tick.scale.set(0.006, 0.14, 0.006);
+        tick.rotation.z = Math.PI / 2;
+        tick.position.set(hm.x, ty, -hm.y);
+        this.vizGroup.add(tick);
+      }
+      const hit = new THREE.Mesh(this.geoCyl, new THREE.MeshBasicMaterial({ transparent: true, opacity: 0 }));
+      hit.scale.set(0.14, hm.h * 0.8, 0.14);
+      hit.position.set(hm.x, hm.e + hm.h / 2, -hm.y);
+      this.vizGroup.add(hit);
+      this.tapTargets.push({ mesh: hit, roomHeightWall: hm.wallId });
     }
     for (const s of viz.rays || []) {
       const e = (s.e || 0) + 0.02;
