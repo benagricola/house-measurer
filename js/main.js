@@ -9,6 +9,7 @@ import { Store } from './state.js';
 import { PlanView } from './plan.js';
 import { View3D } from './view3d.js';
 import { CATEGORIES, PRESETS, WALL_CATEGORIES, categoryColor, stairSteps, stairRise } from './items.js';
+import { LaserLink } from './laser.js';
 
 const CAM_KEY = 'house-measurer.cam';
 const $ = (id) => document.getElementById(id);
@@ -910,6 +911,17 @@ function renderLog() {
     if (isFinite(v) && v > 1) store.setDefaultWallThickness(v / 100);
   });
 
+  section('laser');
+  addRow(laser.connected
+    ? `<span class="pill on">connected</span><span class="log-name">${laser.device?.name || 'laser measure'}</span>`
+    : `<span class="pill off">off</span><span class="log-name dim">${laser.secureContextProblem || 'connect with the laser button in the header'}</span>`);
+  if (laser.rawLog.length) {
+    addRow(`<span class="log-name dim">recent frames (for protocol decoding):</span>`);
+    for (const hex of laser.rawLog.slice(-6)) {
+      addRow(`<code style="font-size:10px;overflow-wrap:anywhere">${hex}</code>`);
+    }
+  }
+
   section('data');
   const dRow = addRow(
     `<button data-act="export">download JSON</button>` +
@@ -1043,6 +1055,7 @@ function renderPanel() {
   const fb = $('floor-btn');
   fb.style.display = store.state.floors.length > 1 ? '' : 'none';
   fb.textContent = store.floor(activeFloor())?.name ?? 'floor';
+  $('laser-btn').classList.toggle('on', !!laser.connected);
 
   // Move-mode chips.
   if (ui.mode === 'move' && !ui.flow) {
@@ -1551,7 +1564,27 @@ function toggle3D() {
   render();
 }
 
+// Bluetooth laser: a decoded reading fills the active field exactly as if
+// typed (metres with a decimal point), so you check it and press OK.
+const laser = new LaserLink({
+  onMeasurement: (m) => {
+    const txt = m.toFixed(3).replace(/0+$/, '').replace(/\.$/, '.0');
+    ui.fields[ui.active] = txt;
+    say(`Laser: ${fmtDist(m)} - OK to commit`, 'good');
+  },
+  onStatus: (text, cls) => {
+    say(text, cls);
+    renderPanel();
+  },
+  onRaw: () => { if (!$('log-sheet').hidden) renderLog(); },
+});
+
 buildKeypad();
+
+$('laser-btn').addEventListener('click', () => {
+  if (laser.connected) laser.disconnect();
+  else laser.connect();
+});
 
 $('undo').addEventListener('click', () => store.undo());
 $('redo').addEventListener('click', () => store.redo());

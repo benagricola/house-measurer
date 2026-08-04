@@ -160,11 +160,26 @@ network calls after load.
 - `js/main.js` - controller: modes, placement flows, keypad, hit-testing,
   log sheet, item form, import/export, wiring.
 
+## Bluetooth laser measures
+
+The **laser** header button connects a BLE laser measure via Web
+Bluetooth (Chrome on Android/ChromeOS; the page must be served over
+HTTPS - the GitHub Pages URL, or localhost). Each reading fills the
+active input field as metres, ready for OK - never committed unseen.
+Known profiles: Leica DISTO (documented float32 characteristic), Bosch
+GLM/PLR service, and generic UART meters (FFE0 / Nordic UART) via a
+heuristic decoder (ASCII, float32 metres, uint32 millimetres, with a
+millimetre-resolution gate against false positives). Unrecognised
+meters still connect and their raw frames appear in hex in the data
+sheet's laser section - capture a few readings and use them to add an
+exact decoder for that model.
+
 ## Deploying
 
-It is a plain static directory - GitHub Pages serving the repo root from
-`main` works as-is (Settings -> Pages -> Deploy from branch). A proper
-workflow file is milestone 5.
+`.github/workflows/pages.yml` deploys the repo root to GitHub Pages on
+every push to main. One-time setup: create a GitHub repo, push, then in
+the repo Settings -> Pages set Source to "GitHub Actions". The https
+Pages URL is also what makes Web Bluetooth available on the phone.
 
 ## Roadmap
 
@@ -176,4 +191,4 @@ workflow file is milestone 5.
    drag for what-ifs~~ (done)
 4. ~~3D extruded view with heights, wall-mounted items, JSON
    export/import~~ (done)
-5. GitHub Pages deploy workflow
+5. ~~GitHub Pages deploy workflow~~ (done - see Deploying)

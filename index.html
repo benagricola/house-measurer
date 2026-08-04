@@ -17,6 +17,7 @@
     <button id="redo" title="redo (ctrl+y)">redo</button>
     <div id="title">house measurer</div>
     <div id="gap-pill" hidden></div>
+    <button id="laser-btn" title="connect a Bluetooth laser measure (needs HTTPS)">laser</button>
     <button id="view3d-btn" title="toggle 3D view">3D</button>
     <button id="log-btn" title="measurements, walls, rooms, layers, export/import">data</button>
     <button id="fit" title="fit everything in view">fit</button>
@@ -134,6 +135,7 @@
     <p>A number with a decimal point is metres, without is centimetres: <b>342</b> = 3.42 m, <b>3.42</b> = 3.42 m, <b>84</b> = 84 cm, <b>15.</b> = 15 m.</p>
     <h2>keys</h2>
     <p>Drag to pan, pinch or scroll to zoom, double-tap empty plan to zoom in one-handed. Keyboard: digits, Enter = OK, Tab = other field, f = flip, Escape = cancel, ctrl+z undo.</p>
+    <p>A Bluetooth laser measure can fill the fields for you: tap <b>laser</b> in the header (Chrome, and the app must be on its https:// address), pick the device, and each reading lands in the active field ready for OK. Unknown meters get their raw frames logged in the data sheet so a decoder can be added.</p>
     <p class="fine">Everything is saved on this device automatically. Export JSON from the log sheet for backup or to move devices.</p>
     <button id="clear-all">clear everything</button>
   </div>

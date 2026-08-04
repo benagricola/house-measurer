@@ -339,6 +339,8 @@ await click('#log-btn');
 await shot('06-data');
 const logText = await js(`document.getElementById('log-list').innerText`);
 assert(logText.includes('A to D'), 'data sheet lists the check measurement');
+assert(/laser/i.test(logText), 'data sheet has the laser section');
+assert(await js(`!!document.getElementById('laser-btn')`), 'laser button present in header');
 assert(/ceiling 250 cm/.test(logText), 'data sheet shows the room ceiling');
 assert(/cm/.test(logText), 'data sheet shows residuals');
 
