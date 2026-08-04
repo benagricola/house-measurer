@@ -153,25 +153,21 @@ export class LaserLink {
   async connect() {
     const problem = this.secureContextProblem;
     if (problem) return this.status(problem, 'warn');
-    // Access to a service after connecting requires it to be listed here,
-    // even when the chooser matched on name.
-    const optionalServices = PROFILES.map((p) => p.service);
+    // The picker shows every device; the user is the filter. We can only
+    // ACCESS services declared here though - so cast a wide net of vendor
+    // UART/measurement services. chrome://bluetooth-internals reveals a
+    // device's full service list when something outside this net turns up.
+    const optionalServices = [
+      ...PROFILES.map((p) => p.service),
+      0xfff0, 0xffe5, 0xffb0,
+      '49535343-fe7d-4ae5-8fa9-9fafd205e455', // Microchip Transparent UART
+    ];
     try {
       this.status('Choose your laser measure in the picker...');
-      this.device = await navigator.bluetooth.requestDevice(this._allDevicesNext
-        ? { acceptAllDevices: true, optionalServices }
-        : {
-          // Most meters do NOT advertise their measurement service UUID,
-          // only a name - so filter primarily by name prefix.
-          filters: [
-            ...PROFILES.map((p) => ({ services: [p.service] })),
-            { namePrefix: 'Bosch' }, { namePrefix: 'GLM' }, { namePrefix: 'PLR' },
-            { namePrefix: 'Universal' }, { namePrefix: 'UD' },
-            { namePrefix: 'Leica' }, { namePrefix: 'DISTO' },
-          ],
-          optionalServices,
-        });
-      this._allDevicesNext = false;
+      this.device = await navigator.bluetooth.requestDevice({
+        acceptAllDevices: true,
+        optionalServices,
+      });
       this.device.addEventListener('gattserverdisconnected', () => {
         this.connected = false;
         this.status('Laser disconnected', 'warn');
@@ -225,10 +221,7 @@ export class LaserLink {
       if (navigator.brave && (e.name === 'SecurityError' || e.name === 'NotFoundError')) {
         return this.status('Brave blocks Web Bluetooth by default: enable brave://flags/#brave-web-bluetooth-api and restart, or use Chrome.', 'warn');
       }
-      if (e.name === 'NotFoundError') {
-        this._allDevicesNext = true;
-        return this.status('No device chosen. If yours was not listed, tap laser again - the next picker shows ALL Bluetooth devices.', 'warn');
-      }
+      if (e.name === 'NotFoundError') return this.status('No device chosen', 'warn');
       this.status(`Bluetooth: ${e.message}`, 'warn');
     }
   }
