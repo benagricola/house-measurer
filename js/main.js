@@ -8,7 +8,7 @@ import {
 import { Store } from './state.js';
 import { PlanView } from './plan.js';
 import { View3D } from './view3d.js';
-import { CATEGORIES, PRESETS, WALL_CATEGORIES, categoryColor } from './items.js';
+import { CATEGORIES, PRESETS, WALL_CATEGORIES, categoryColor, stairSteps } from './items.js';
 
 const CAM_KEY = 'house-measurer.cam';
 const $ = (id) => document.getElementById(id);
@@ -61,6 +61,10 @@ function handleTap3D({ pointId, ghostSide, world }) {
 const anchorMode = () => store.state.points.length === 0;
 const pos = (id) => store.solved.pos.get(id);
 const twoFieldFlow = () => !ui.flow || ui.flow.kind === 'item-c1' || ui.flow.kind === 'item-c2';
+const activeFloor = () => store.state.activeFloor;
+const onFloor = (thing) => thing && thing.floor === activeFloor();
+const floorVisible = (id) => store.floor(id)?.visible !== false;
+const offFloorRefs = () => ui.refs.filter((id) => !onFloor(store.point(id)));
 
 function say(text, cls = '') {
   ui.message = text ? { text, cls } : null;
@@ -92,6 +96,7 @@ function preview() {
 function wallSegments() {
   const segs = [];
   for (const wall of store.state.walls) {
+    if (!onFloor(wall)) continue;
     const runs = wall.closed ? [...wall.pts, wall.pts[0]] : wall.pts;
     for (let i = 0; i + 1 < runs.length; i++) {
       const a = pos(runs[i]), b = pos(runs[i + 1]);
@@ -112,20 +117,25 @@ function hitWall(world, screen) {
 }
 
 function hitPoint(screen) {
-  let best = null, bestD = 26;
+  // Active-floor points win; ghosted other-floor points are still tappable
+  // (that is how you pick a point to stack above).
+  let best = null, bestD = 26, bestActive = false;
   for (const pt of store.state.points) {
     const p = pos(pt.id);
-    if (!p) continue;
+    if (!p || !floorVisible(pt.floor)) continue;
     const sp = plan.worldToScreen(p.x, p.y);
     const d = Math.hypot(sp.x - screen.x, sp.y - screen.y);
-    if (d < bestD) { best = pt.id; bestD = d; }
+    const active = onFloor(pt);
+    if (d < 26 && (d < bestD || (active && !bestActive))) {
+      if (active || !bestActive) { best = pt.id; bestD = d; bestActive = active; }
+    }
   }
   return best;
 }
 
 function hitItem(world) {
   const vis = visibleLayers();
-  const items = store.state.items.filter((i) => vis.has(i.layer));
+  const items = store.state.items.filter((i) => vis.has(i.layer) && onFloor(i));
   for (let i = items.length - 1; i >= 0; i--) {
     if (pointInItem(world, items[i], 2 * plan.worldPerPx)) return items[i].id;
   }
@@ -293,6 +303,10 @@ function commitPoint(side) {
     ui.active = d1 == null ? 0 : 1;
     return say('Type both distances, then OK', 'warn');
   }
+  const off = offFloorRefs();
+  if (off.length) {
+    return say(`${off.map((id) => store.point(id).name).join(', ')} is on another floor - press "stack here" to pin it to this floor first (laser distances across floors are slant, not plan)`, 'warn');
+  }
   const c = circleIntersect(pos(ui.refs[0]), d1, pos(ui.refs[1]), d2);
   if (!c.ok) return say('Reference points coincide', 'warn');
   if (c.gap > CLAMP_TOL) return say(gapExplain(c, d1, d2), 'err');
@@ -301,22 +315,39 @@ function commitPoint(side) {
     return acceptCorner(side >= 0 ? c.left : c.right);
   }
   const name = pointName(store.state.points.length);
-  // Until the first room is closed, new points chain straight into the
-  // wall run - measuring the room IS drawing it.
-  const autoWall = !store.hasClosedRoom ? store.openWall() : null;
-  ui.lastId = store.addPoint(ui.refs[0], ui.refs[1], d1, d2, side, { appendWall: autoWall?.id });
+  // Until this floor's first room is closed, new points chain straight
+  // into the wall run - measuring the room IS drawing it.
+  const autoWall = !store.hasClosedRoomOn(activeFloor());
+  ui.lastId = store.addPoint(ui.refs[0], ui.refs[1], d1, d2, side, { autoWall });
   ui.fields = ['', ''];
   ui.active = 0;
   const p = pos(ui.lastId);
   if (p && !plan.isOnScreen(p.x, p.y)) plan.fitAll([...store.solved.pos.values()]);
-  const wallHint = autoWall && (autoWall.pts.length >= 3)
+  const wallHint = autoWall && (store.openWall()?.pts.length >= 3)
     ? ' - "close room" when you are back at the start'
     : '';
   say(`${name} placed - flip if it is on the wrong side${wallHint}`, 'good');
 }
 
+// Replace every off-floor reference with a stacked twin pinned to this
+// floor at the same plan position.
+function stackRefs() {
+  const off = offFloorRefs();
+  if (!off.length) return;
+  const autoWall = !store.hasClosedRoomOn(activeFloor());
+  const made = [];
+  for (const id of off) {
+    const nid = store.addStackedPoint(id, { autoWall });
+    ui.refs[ui.refs.indexOf(id)] = nid;
+    made.push(`${store.point(nid).name} above ${store.point(id).name}`);
+    ui.lastId = nid;
+  }
+  say(`Stacked ${made.join(', ')} - measure from ${made.length > 1 ? 'them' : 'it'} now`, 'good');
+}
+
 function commitCheck() {
   if (ui.refs.length !== 2) return say('Tap 2 points to record a distance between them', 'warn');
+  if (offFloorRefs().length) return say('Both points must be on this floor (cross-floor laser shots are slant distances)', 'warn');
   const v = parseDistance(ui.fields[ui.active]) ?? parseDistance(ui.fields[0]);
   if (v == null) return say('Type the measured distance first', 'warn');
   const id = store.addMeasurement(ui.refs[0], ui.refs[1], v);
@@ -700,6 +731,36 @@ function renderLog() {
     if (name) store.addLayer(name);
   });
 
+  section('floors');
+  for (const f of store.state.floors) {
+    const active = store.state.activeFloor === f.id;
+    const row = addRow(
+      `<button data-act="vis" class="${f.visible ? 'vis-on' : 'vis-off'}">${f.visible ? 'shown' : 'hidden'}</button>` +
+      `<span class="log-name ${active ? 'active-layer' : ''}">${f.name}</span>` +
+      `<input data-act="elev" type="number" value="${Math.round(f.elevation * 100)}"> cm ` +
+      `<button data-act="use">${active ? 'active' : 'go'}</button>` +
+      (store.state.floors.length > 1 && store.floorEmpty(f.id) ? `<button data-act="del">x</button>` : '')
+    );
+    row.querySelector('[data-act="vis"]').addEventListener('click', () => store.setFloorVisible(f.id, !f.visible));
+    row.querySelector('[data-act="use"]').addEventListener('click', () => store.setActiveFloor(f.id));
+    row.querySelector('[data-act="elev"]').addEventListener('change', (e) => {
+      const v = parseFloat(e.target.value);
+      if (isFinite(v)) store.setFloorElevation(f.id, v / 100);
+    });
+    row.querySelector('[data-act="del"]')?.addEventListener('click', () => store.deleteFloor(f.id));
+  }
+  const addFloorRow = addRow(
+    `<input id="new-floor-name" placeholder="floor name"><input id="new-floor-off" type="number" placeholder="+cm" value="290"><button data-act="addf">+ floor</button>`
+  );
+  addFloorRow.querySelector('[data-act="addf"]').addEventListener('click', () => {
+    const name = $('new-floor-name').value.trim() || `floor ${store.state.floors.length + 1}`;
+    const off = parseFloat($('new-floor-off').value);
+    const base = store.floor(store.state.activeFloor)?.elevation ?? 0;
+    store.addFloor(name, base + (isFinite(off) ? off / 100 : 2.9));
+    say(`${name} added and active - tap a ghosted point below, then "stack here" to anchor it`, 'good');
+    $('log-sheet').hidden = true;
+  });
+
   const hRow = addRow(
     `<span class="log-name">default ceiling for new rooms</span>` +
     `<input id="room-h" type="number" value="${Math.round((store.state.roomHeight || 2.6) * 100)}"> cm ` +
@@ -818,7 +879,8 @@ function renderPanel() {
       slot.textContent = id ? store.point(id).name : `tap ref ${i + 1}`;
       slot.classList.toggle('set', !!id);
     }
-    $('check-btn').style.display = ui.refs.length === 2 && !ui.flow ? '' : 'none';
+    $('check-btn').style.display = ui.refs.length === 2 && !ui.flow && !offFloorRefs().length ? '' : 'none';
+    $('stack-btn').style.display = !ui.flow && offFloorRefs().length ? '' : 'none';
   }
   // "close room" appears while a wall run with 3+ points is waiting.
   const open = store.openWall();
@@ -826,6 +888,9 @@ function renderPanel() {
   $('close-room').style.display = closable && (ui.mode === 'measure' || ui.mode === 'wall') ? '' : 'none';
   $('wall-new').disabled = !ui.activeWallId && !open;
   $('show-work').classList.toggle('on', !!ui.showWork);
+  const fb = $('floor-btn');
+  fb.style.display = store.state.floors.length > 1 ? '' : 'none';
+  fb.textContent = store.floor(activeFloor())?.name ?? 'floor';
 
   // Move-mode chips.
   if (ui.mode === 'move' && !ui.flow) {
@@ -922,15 +987,21 @@ function renderPlan() {
     return;
   }
 
-  // Walls + closed-room fill.
+  // Walls + closed-room fill: active floor solid, other visible floors as a
+  // faint ghost underlay for cross-floor alignment.
   for (const wall of store.state.walls) {
+    if (!floorVisible(wall.floor)) continue;
+    const ghost = !onFloor(wall);
     const runs = wall.closed ? [...wall.pts, wall.pts[0]] : wall.pts;
     const active = wall.id === ui.activeWallId;
     for (let i = 0; i + 1 < runs.length; i++) {
       const a = pos(runs[i]), b = pos(runs[i + 1]);
-      if (a && b) content.segments.push({ x1: a.x, y1: a.y, x2: b.x, y2: b.y, style: active ? 'wallActive' : 'wall' });
+      if (a && b) content.segments.push({
+        x1: a.x, y1: a.y, x2: b.x, y2: b.y,
+        style: ghost ? 'wallGhost' : active ? 'wallActive' : 'wall',
+      });
     }
-    if (wall.closed) {
+    if (wall.closed && !ghost) {
       const poly = wall.pts.map(pos).filter(Boolean);
       if (poly.length >= 3) content.polygons.push({ pts: poly, color: 0x9a8f6a, opacity: 0.07 });
     }
@@ -942,10 +1013,10 @@ function renderPlan() {
     if (pA && pB) content.segments.push({ x1: pA.x, y1: pA.y, x2: pB.x, y2: pB.y, style: 'ab' });
   }
 
-  // Items on visible layers.
+  // Items on visible layers, active floor only.
   const vis = visibleLayers();
   for (const it of store.state.items) {
-    if (!vis.has(it.layer)) continue;
+    if (!vis.has(it.layer) || !onFloor(it)) continue;
     let { x, y, rot } = it;
     if (ui.drag?.kind === 'move' && ui.drag.id === it.id) { x = ui.drag.x0 + ui.drag.dx; y = ui.drag.y0 + ui.drag.dy; }
     if (ui.drag?.kind === 'rotate' && ui.drag.id === it.id && ui.drag.newRot != null) rot = ui.drag.newRot;
@@ -961,21 +1032,40 @@ function renderPlan() {
       const hd = rotateHandlePos({ ...it, x, y, rot });
       content.handles.push(hd);
     }
+    // Stairs: draw the treads so the flight reads as steps in plan.
+    if (it.category === 'stairs') {
+      const n = stairSteps(it.h);
+      const cos = Math.cos(rot), sin = Math.sin(rot);
+      for (let s = 1; s < n; s++) {
+        const lx = -it.w / 2 + (it.w * s) / n;
+        content.segments.push({
+          x1: x + lx * cos - (-it.d / 2) * sin, y1: y + lx * sin + (-it.d / 2) * cos,
+          x2: x + lx * cos - (it.d / 2) * sin, y2: y + lx * sin + (it.d / 2) * cos,
+          style: 'ray',
+        });
+      }
+    }
   }
 
-  // Points, names, residual badges. Reference rings only where reference
-  // selection means something (measure mode and the two-distance flows).
+  // Points, names, residual badges. Active floor solid; other visible
+  // floors ghosted (still tappable, for stacking). Reference rings only
+  // where reference selection means something.
   const showRefs = ui.mode === 'measure' || twoFieldFlow() && ui.flow;
   for (const pt of pts) {
     const p = pos(pt.id);
-    if (!p) continue;
+    if (!p || !floorVisible(pt.floor)) continue;
+    const ghost = !onFloor(pt);
     content.points.push({
       x: p.x, y: p.y,
-      style: pt.fix ? 'point' : 'anchor',
+      style: ghost ? 'ghostpt' : pt.fix ? 'point' : 'anchor',
       refIndex: showRefs && ui.refs.indexOf(pt.id) >= 0 ? ui.refs.indexOf(pt.id) : null,
-      isLast: pt.id === ui.lastId,
+      isLast: !ghost && pt.id === ui.lastId,
     });
-    content.labels.push({ key: `p${pt.id}`, x: p.x, y: p.y, text: pt.name, cls: 'name', dy: -18 });
+    content.labels.push({
+      key: `p${pt.id}`, x: p.x, y: p.y, text: pt.name,
+      cls: ghost ? 'name faint' : 'name', dy: -18,
+    });
+    if (ghost) continue;
     const res = store.solved.pres.get(pt.id) || 0;
     if (res >= 0.001) {
       const cls = res < 0.01 ? 'res good' : res < 0.03 ? 'res warn' : 'res err';
@@ -1078,37 +1168,40 @@ function renderPlan() {
 // labels, so measuring works without leaving 3D.
 function surveyViz() {
   const viz = { points: [], ghosts: [], circles: [], rays: [], labels: [] };
+  const elev = (fid) => store.floor(fid)?.elevation ?? 0;
+  const activeE = elev(activeFloor());
   for (const pt of store.state.points) {
     const p = pos(pt.id);
-    if (!p) continue;
+    if (!p || !floorVisible(pt.floor)) continue;
+    const e = elev(pt.floor);
     const refIdx = ui.refs.indexOf(pt.id);
     viz.points.push({
-      id: pt.id, x: p.x, y: p.y,
+      id: pt.id, x: p.x, y: p.y, e,
       style: pt.fix ? 'point' : 'anchor',
       ref: refIdx >= 0 ? refIdx : null,
       isLast: pt.id === ui.lastId,
     });
-    viz.labels.push({ key: `p${pt.id}`, x: p.x, y: p.y, z: 0.52, text: pt.name, cls: 'name' });
+    viz.labels.push({ key: `p${pt.id}`, x: p.x, y: p.y, z: e + 0.52, text: pt.name, cls: 'name' });
   }
   const pv = preview();
   if (pv) {
     const [r1, r2] = ui.refs.map(pos);
-    if (pv.d1 != null) viz.circles.push({ cx: r1.x, cy: r1.y, r: pv.d1 });
-    if (pv.d2 != null) viz.circles.push({ cx: r2.x, cy: r2.y, r: pv.d2 });
+    if (pv.d1 != null) viz.circles.push({ cx: r1.x, cy: r1.y, r: pv.d1, e: activeE });
+    if (pv.d2 != null) viz.circles.push({ cx: r2.x, cy: r2.y, r: pv.d2, e: activeE });
     if (pv.cands && pv.cands.gap <= CLAMP_TOL) {
       const name = pointName(store.state.points.length);
       for (const [side, p] of [[+1, pv.cands.left], [-1, pv.cands.right]]) {
         const primary = side === (ui.flow ? ui.flowSide : 1);
-        viz.ghosts.push({ x: p.x, y: p.y, side, primary });
+        viz.ghosts.push({ x: p.x, y: p.y, e: activeE, side, primary });
         viz.labels.push({
-          key: `gh${side}`, x: p.x, y: p.y, z: 1.15,
+          key: `gh${side}`, x: p.x, y: p.y, z: activeE + 1.15,
           text: primary ? `${name}?` : 'or here',
           cls: primary ? 'ghost' : 'ghost dim',
         });
       }
       const t = (ui.flow ? ui.flowSide : 1) >= 0 ? pv.cands.left : pv.cands.right;
-      viz.rays.push({ x1: r1.x, y1: r1.y, x2: t.x, y2: t.y });
-      viz.rays.push({ x1: r2.x, y1: r2.y, x2: t.x, y2: t.y });
+      viz.rays.push({ x1: r1.x, y1: r1.y, x2: t.x, y2: t.y, e: activeE });
+      viz.rays.push({ x1: r2.x, y1: r2.y, x2: t.x, y2: t.y, e: activeE });
     }
   }
   return viz;
@@ -1229,6 +1322,13 @@ $('show-work').addEventListener('click', () => {
 });
 
 $('check-btn').addEventListener('click', commitCheck);
+$('stack-btn').addEventListener('click', stackRefs);
+$('floor-btn').addEventListener('click', () => {
+  const floors = store.state.floors;
+  const i = floors.findIndex((f) => f.id === activeFloor());
+  store.setActiveFloor(floors[(i + 1) % floors.length].id);
+  say(`Now on ${store.floor(activeFloor()).name}`);
+});
 
 $('sel-edit').addEventListener('click', () => { if (ui.selItem) openItemForm(ui.selItem); });
 $('sel-lock').addEventListener('click', () => {

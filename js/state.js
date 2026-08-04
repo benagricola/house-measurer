@@ -8,23 +8,30 @@ const UNDO_CAP = 200;
 
 function emptyState() {
   return {
-    v: 2,
+    v: 3,
     points: [],
     measurements: [],
-    walls: [],        // { id, pts: [pointId...], closed }
+    walls: [],        // { id, pts: [pointId...], closed, height?, floor }
     items: [],        // see addItem for shape
     layers: [{ id: 'current', name: 'current', visible: true }],
     activeLayer: 'current',
+    floors: [{ id: 'f0', name: 'ground', elevation: 0, visible: true }],
+    activeFloor: 'f0',
     roomHeight: 2.6,
   };
 }
 
 // Idempotent shape upgrade; also applied after undo/redo restores so old
-// snapshots (or a v1 localStorage) never leave fields missing.
+// snapshots (or a v1/v2 localStorage) never leave fields missing.
 function migrate(s) {
   const base = emptyState();
   for (const k of Object.keys(base)) if (s[k] === undefined) s[k] = base[k];
-  s.v = 2;
+  const f0 = s.floors[0]?.id ?? 'f0';
+  for (const p of s.points) if (p.floor === undefined) p.floor = f0;
+  for (const w of s.walls) if (w.floor === undefined) w.floor = f0;
+  for (const it of s.items) if (it.floor === undefined) it.floor = f0;
+  if (!s.floors.some((f) => f.id === s.activeFloor)) s.activeFloor = f0;
+  s.v = 3;
   return s;
 }
 
@@ -121,34 +128,55 @@ export class Store {
 
   // --- points & measurements ----------------------------------------------
 
+  // Append to (or start) the active floor's open wall run - the
+  // auto-walling that runs until that floor's first room closes.
+  _autoWallAppend(s, pointId) {
+    let w = s.walls.find((w) => !w.closed && w.floor === s.activeFloor && w.pts.length >= 1);
+    if (!w) {
+      w = { id: this.nextId++, pts: [], closed: false, floor: s.activeFloor };
+      s.walls.push(w);
+    }
+    if (!w.pts.includes(pointId)) w.pts.push(pointId);
+  }
+
   // First measurement: creates anchors A and B, and (unless told otherwise)
   // starts the wall run that auto-chains points until the first room closes.
   setAnchors(d, { wall = true } = {}) {
     const a = this.nextId++, b = this.nextId++, m = this.nextId++;
-    const wallId = wall ? this.nextId++ : null;
     this.commit((s) => {
       s.points.push(
-        { id: a, name: 'A', fix: null },
-        { id: b, name: 'B', fix: null }
+        { id: a, name: 'A', fix: null, floor: s.activeFloor },
+        { id: b, name: 'B', fix: null, floor: s.activeFloor }
       );
       s.measurements.push({ id: m, p: a, q: b, d });
-      if (wall) s.walls.push({ id: wallId, pts: [a, b], closed: false });
+      if (wall) {
+        this._autoWallAppend(s, a);
+        this._autoWallAppend(s, b);
+      }
     });
-    return { a, b, wallId };
+    return { a, b };
   }
 
-  // appendWall: id of an open wall run to extend with the new point in the
-  // same undo step (the auto-walling before the first room closes).
-  addPoint(r1, r2, d1, d2, side, { appendWall = null } = {}) {
+  // autoWall: chain the new point into the active floor's open wall run in
+  // the same undo step.
+  addPoint(r1, r2, d1, d2, side, { autoWall = false } = {}) {
     const id = this.nextId++, m1 = this.nextId++, m2 = this.nextId++;
     this.commit((s) => {
-      s.points.push({ id, name: pointName(s.points.length), fix: { r1, r2, side } });
+      s.points.push({ id, name: pointName(s.points.length), fix: { r1, r2, side }, floor: s.activeFloor });
       s.measurements.push({ id: m1, p: r1, q: id, d: d1 });
       s.measurements.push({ id: m2, p: r2, q: id, d: d2 });
-      if (appendWall != null) {
-        const w = s.walls.find((w) => w.id === appendWall);
-        if (w && !w.closed && !w.pts.includes(id)) w.pts.push(id);
-      }
+      if (autoWall) this._autoWallAppend(s, id);
+    });
+    return id;
+  }
+
+  // A point on the active floor pinned directly above/below an existing
+  // point (same plan position) - the cross-floor reference.
+  addStackedPoint(refId, { autoWall = false } = {}) {
+    const id = this.nextId++;
+    this.commit((s) => {
+      s.points.push({ id, name: pointName(s.points.length), fix: { stack: refId }, floor: s.activeFloor });
+      if (autoWall) this._autoWallAppend(s, id);
     });
     return id;
   }
@@ -191,7 +219,7 @@ export class Store {
     if (wall && (wall.closed || !wall.pts.length)) wall = null;
     if (!wall) {
       const id = this.nextId++;
-      this.commit((s) => s.walls.push({ id, pts: [pointId], closed: false }));
+      this.commit((s) => s.walls.push({ id, pts: [pointId], closed: false, floor: s.activeFloor }));
       return { wallId: id, closed: false };
     }
     if (wall.pts.includes(pointId)) {
@@ -232,14 +260,64 @@ export class Store {
     });
   }
 
-  // True once any room is closed - after that, new points are unspecified.
-  get hasClosedRoom() {
-    return this.state.walls.some((w) => w.closed);
+  // True once a room is closed on the given floor - after that, new points
+  // there are unspecified.
+  hasClosedRoomOn(floorId) {
+    return this.state.walls.some((w) => w.closed && w.floor === floorId);
   }
 
-  // The open wall run that auto-chaining extends, if any.
+  // The active floor's open wall run that auto-chaining extends, if any.
   openWall() {
-    return this.state.walls.find((w) => !w.closed && w.pts.length >= 1) || null;
+    return this.state.walls.find(
+      (w) => !w.closed && w.floor === this.state.activeFloor && w.pts.length >= 1
+    ) || null;
+  }
+
+  // --- floors --------------------------------------------------------------
+
+  floor(id) { return this.state.floors.find((f) => f.id === id); }
+
+  addFloor(name, elevation) {
+    const id = 'floor' + this.nextId++;
+    this.commit((s) => {
+      s.floors.push({ id, name, elevation, visible: true });
+      s.activeFloor = id;
+    });
+    return id;
+  }
+
+  setActiveFloor(id) {
+    if (!this.floor(id)) return;
+    this.commit((s) => { s.activeFloor = id; });
+  }
+
+  setFloorElevation(id, elevation) {
+    this.commit((s) => {
+      const f = s.floors.find((f) => f.id === id);
+      if (f) f.elevation = elevation;
+    });
+  }
+
+  setFloorVisible(id, visible) {
+    this.commit((s) => {
+      const f = s.floors.find((f) => f.id === id);
+      if (f) f.visible = visible;
+    });
+  }
+
+  floorEmpty(id) {
+    const s = this.state;
+    return !s.points.some((p) => p.floor === id) && !s.walls.some((w) => w.floor === id)
+      && !s.items.some((i) => i.floor === id);
+  }
+
+  deleteFloor(id) {
+    if (this.state.floors.length < 2 || !this.floorEmpty(id)) return false;
+    this.commit((s) => {
+      s.floors = s.floors.filter((f) => f.id !== id);
+      if (s.activeFloor === id) s.activeFloor = s.floors[0].id;
+    });
+    return true;
   }
 
   deleteWall(id) {
@@ -266,6 +344,7 @@ export class Store {
         z0: props.z0 ?? 0,
         mount: props.mount ?? null, // { wallId, seg } for wall-mounted
         locked: props.locked ?? false,
+        floor: props.floor ?? s.activeFloor,
       });
     });
     return id;

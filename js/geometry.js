@@ -91,6 +91,14 @@ export function solve(state) {
     }
     const f = pt.fix;
     if (!f) { errors.set(pt.id, 'no fix'); return; }
+    // Stacked point: same plan position as its reference (a point declared
+    // to sit directly above/below another, e.g. on the next floor).
+    if (f.stack != null) {
+      const sp = pos.get(f.stack);
+      if (!sp) { errors.set(pt.id, 'stacked reference not solved'); return; }
+      pos.set(pt.id, { x: sp.x, y: sp.y });
+      return;
+    }
     const P = pos.get(f.r1), Q = pos.get(f.r2);
     const d1 = dist(f.r1, pt.id), d2 = dist(f.r2, pt.id);
     if (!P || !Q || d1 == null || d2 == null) {
@@ -143,13 +151,29 @@ function solveLinear(A, b) {
 // Returns { pos, mres: Map<measId, m>, pres: Map<pointId, m> } or null when
 // there is nothing to adjust.
 export function adjust(state, chain) {
-  const ids = state.points.filter((p) => chain.pos.has(p.id)).map((p) => p.id);
+  // A stacked point shares its owner's plan coordinates, so it shares the
+  // owner's variables: measurements to it act on the owner directly.
+  const byId = new Map(state.points.map((p) => [p.id, p]));
+  const ownerOf = (id) => {
+    let p = byId.get(id);
+    const seen = new Set();
+    while (p?.fix?.stack != null && !seen.has(p.id)) {
+      seen.add(p.id);
+      p = byId.get(p.fix.stack);
+    }
+    return p?.id ?? id;
+  };
+  const ids = state.points
+    .filter((p) => chain.pos.has(p.id) && ownerOf(p.id) === p.id)
+    .map((p) => p.id);
   if (ids.length < 2) return null;
   const idx = new Map(ids.map((id, i) => [id, i]));
   const varOf = (i) => (i === 0 ? [-1, -1] : i === 1 ? [0, -1] : [2 * i - 3, 2 * i - 2]);
   const nv = 2 * ids.length - 3;
   const X = ids.map((id) => ({ ...chain.pos.get(id) }));
-  const meas = state.measurements.filter((m) => idx.has(m.p) && idx.has(m.q));
+  const meas = state.measurements
+    .map((m) => ({ ...m, p: ownerOf(m.p), q: ownerOf(m.q) }))
+    .filter((m) => idx.has(m.p) && idx.has(m.q) && m.p !== m.q);
   if (!meas.length) return null;
 
   for (let iter = 0; iter < 12; iter++) {
@@ -185,14 +209,23 @@ export function adjust(state, chain) {
   }
 
   const mres = new Map(), pres = new Map();
-  for (const m of meas) {
-    const i = idx.get(m.p), j = idx.get(m.q);
+  for (const m of state.measurements) {
+    const i = idx.get(ownerOf(m.p)), j = idx.get(ownerOf(m.q));
+    if (i == null || j == null || i === j) continue;
     const r = Math.hypot(X[i].x - X[j].x, X[i].y - X[j].y) - m.d;
     mres.set(m.id, r);
     pres.set(m.p, Math.max(pres.get(m.p) || 0, Math.abs(r)));
     pres.set(m.q, Math.max(pres.get(m.q) || 0, Math.abs(r)));
   }
-  return { pos: new Map(ids.map((id, i) => [id, X[i]])), mres, pres };
+  const pos = new Map(ids.map((id, i) => [id, X[i]]));
+  // Stacked points ride on their owner's adjusted position.
+  for (const p of state.points) {
+    if (!pos.has(p.id) && chain.pos.has(p.id)) {
+      const o = pos.get(ownerOf(p.id));
+      if (o) pos.set(p.id, { ...o });
+    }
+  }
+  return { pos, mres, pres };
 }
 
 // Chain solve + least-squares adjustment in one call.

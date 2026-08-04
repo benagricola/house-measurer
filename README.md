@@ -34,6 +34,31 @@ client-side, state in localStorage, no build step.
    as references, candidates appear as pillars, and the measurement
    circles draw across the floor.
 
+## Floors and stairs
+
+All floors share one plan coordinate system; a floor only adds an
+elevation. Add a floor in the data sheet (name + floor-to-floor height in
+cm, e.g. ceiling + joist void). To anchor the new floor, tap a ghosted
+point from the floor below that sits directly beneath a usable spot
+(stairwell corner, external wall corner - or drop a plumb line) and press
+**stack here**: a twin point is pinned at the same plan position on the
+new floor. Stack two, then measure the whole floor from them exactly as
+downstairs - auto-walling, close room and per-room ceilings all work per
+floor. The solver treats a stacked twin and its origin as the same 2D
+unknown, so redundant measurements tighten both floors together. The
+floor chip beside the mode bar switches floors; the plan ghosts the other
+visible floors underneath for alignment, and 3D stacks everything at its
+real elevation (upper rooms get a visible floor build-up slab).
+
+Stairs are an item category: width = the flight's horizontal run, depth =
+stair width, height = total rise (default the floor-to-floor height).
+Risers are derived at ~18 cm; the flight renders as real steps in 3D and
+with tread lines in plan, ascending along the item's long axis. Measure a
+staircase with the builders' method - count risers, measure one riser,
+one going and the width; the total rise should match the floor-to-floor
+offset, which is your cross-check. An L-shaped stair is two flights plus
+a landing ("other" item).
+
 Units: a number **with** a decimal point is metres, **without** is
 centimetres. `342` = 3.42 m, `3.42` = 3.42 m, `84` = 84 cm. For a whole
 number of metres add a trailing dot: `15.` = 15 m. Comma works as a decimal

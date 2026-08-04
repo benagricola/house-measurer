@@ -18,7 +18,7 @@ import * as THREE from 'three';
 import { OrbitControls } from '../vendor/OrbitControls.js';
 import { RoomEnvironment } from '../vendor/RoomEnvironment.js';
 import { RoundedBoxGeometry } from '../vendor/RoundedBoxGeometry.js';
-import { categoryColor } from './items.js';
+import { categoryColor, stairSteps } from './items.js';
 import { itemCorners } from './geometry.js';
 import {
   floorMaterial, wallMaterial, groundMaterial, plainMaterial, steelMaterial,
@@ -287,11 +287,29 @@ export class View3D {
     ));
   }
 
+  // Straight flight ascending along local +x: w = run, d = width, h = rise.
+  buildStairs(it) {
+    const g = new THREE.Group();
+    const n = stairSteps(it.h);
+    const going = it.w / n, riser = it.h / n;
+    const wood = itemMaterials({ ...it, category: 'shelf' });
+    for (let i = 0; i < n; i++) {
+      const stepH = riser * (i + 1);
+      const step = this.shadowed(new THREE.Mesh(
+        this.geo(new THREE.BoxGeometry(going, stepH, it.d)), wood
+      ));
+      step.position.set(-it.w / 2 + going * (i + 0.5), stepH / 2 - it.h / 2, 0);
+      g.add(step);
+    }
+    return g;
+  }
+
   buildItem(it) {
     if (it.category === 'window') return this.buildWindow(it);
     if (it.category === 'door') return this.buildDoor(it);
     if (it.category === 'extraction') return this.buildHood(it);
     if (it.category === 'shelf') return this.buildShelf(it);
+    if (it.category === 'stairs') return this.buildStairs(it);
     return this.buildGenericItem(it);
   }
 
@@ -308,8 +326,12 @@ export class View3D {
     this.viz = viz;
     const pos = (id) => solved.pos.get(id);
     const defaultH = state.roomHeight || 2.6;
+    const floorRec = (fid) => (state.floors || []).find((f) => f.id === fid);
+    const floorShown = (fid) => floorRec(fid)?.visible !== false;
+    const elevOf = (fid) => floorRec(fid)?.elevation ?? 0;
+    let maxElev = 0;
 
-    const items = state.items.filter((i) => visibleLayers.has(i.layer));
+    const items = state.items.filter((i) => visibleLayers.has(i.layer) && floorShown(i.floor));
 
     const openings = new Map();
     for (const it of items) {
@@ -322,6 +344,9 @@ export class View3D {
 
     let all = [];
     for (const wall of state.walls) {
+      if (!floorShown(wall.floor)) continue;
+      const elev = elevOf(wall.floor);
+      maxElev = Math.max(maxElev, elev);
       const pts = wall.pts.map(pos).filter(Boolean);
       if (pts.length < 2) continue;
       const H = wall.height || defaultH;
@@ -355,7 +380,7 @@ export class View3D {
         const mesh = this.shadowed(new THREE.Mesh(geo, wallMaterial()));
         const rn = { x: dir.y, y: -dir.x };
         mesh.rotation.y = Math.atan2(dir.y, dir.x);
-        mesh.position.set(a.x - rn.x * WALL_T / 2, 0, -(a.y - rn.y * WALL_T / 2));
+        mesh.position.set(a.x - rn.x * WALL_T / 2, elev, -(a.y - rn.y * WALL_T / 2));
         this.group.add(mesh);
 
         const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
@@ -372,7 +397,7 @@ export class View3D {
           skirt.receiveShadow = true;
           const inn = { x: -n.x, y: -n.y };
           skirt.position.set(
-            mid.x + inn.x * (WALL_T / 2 + 0.01), 0.045,
+            mid.x + inn.x * (WALL_T / 2 + 0.01), elev + 0.045,
             -(mid.y + inn.y * (WALL_T / 2 + 0.01))
           );
           skirt.rotation.y = Math.atan2(dir.y, dir.x);
@@ -383,9 +408,20 @@ export class View3D {
         const shape = new THREE.Shape(pts.map((p) => new THREE.Vector2(p.x, p.y)));
         const floor = new THREE.Mesh(this.geo(new THREE.ShapeGeometry(shape)), floorMaterial());
         floor.rotation.x = -Math.PI / 2;
-        floor.position.y = 0.004;
+        floor.position.y = elev + 0.004;
         floor.receiveShadow = true;
         this.group.add(floor);
+        // Upper rooms get a visible floor build-up (the joist/void zone).
+        if (elev > 0.05) {
+          const slab = new THREE.Mesh(
+            this.geo(new THREE.ExtrudeGeometry(shape, { depth: 0.22, bevelEnabled: false })),
+            plainMaterial(0xe6e0d0, 0.9)
+          );
+          slab.rotation.x = -Math.PI / 2;
+          slab.position.y = elev - 0.22;
+          slab.castShadow = true;
+          this.group.add(slab);
+        }
       }
       all = all.concat(pts);
     }
@@ -396,7 +432,7 @@ export class View3D {
 
     for (const it of items) {
       const obj = this.buildItem(it);
-      obj.position.set(it.x, it.z0 + it.h / 2, -it.y);
+      obj.position.set(it.x, elevOf(it.floor) + it.z0 + it.h / 2, -it.y);
       obj.rotation.y = it.rot;
       obj.traverse((m) => { if (m.isMesh) { m.castShadow = true; m.receiveShadow = true; } });
       this.group.add(obj);
@@ -418,17 +454,19 @@ export class View3D {
       }
       const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
       const span = Math.max(maxX - minX, maxY - minY, 3);
-      this.sun.position.set(cx + span * 0.9, span * 1.6 + 3, -cy + span * 0.6);
+      this.sun.position.set(cx + span * 0.9, span * 1.6 + 3 + maxElev, -cy + span * 0.6);
       this.sun.target.position.set(cx, 0, -cy);
-      const half = Math.max(5, span * 0.9);
+      const half = Math.max(5, span * 0.9 + maxElev * 0.5);
       Object.assign(this.sun.shadow.camera, {
-        left: -half, right: half, top: half, bottom: -half, near: 1, far: span * 5 + 20,
+        left: -half, right: half, top: half, bottom: -half, near: 1, far: span * 5 + 20 + maxElev * 4,
       });
       this.sun.shadow.camera.updateProjectionMatrix();
 
       if (!this._framed) {
-        this.controls.target.set(cx, 0.8, -cy);
-        this.camera.position.set(cx + span * 1.1, span * 1.15, -cy + span * 1.5);
+        this.controls.target.set(cx, 0.8 + maxElev * 0.5, -cy);
+        this.camera.position.set(
+          cx + span * 1.1, span * 1.15 + maxElev * 0.9, -cy + span * 1.5 + maxElev * 0.4
+        );
         this.controls.update();
         this._framed = true;
       }
@@ -443,45 +481,48 @@ export class View3D {
   buildViz(viz) {
     if (!viz) return;
     for (const p of viz.points || []) {
+      const e = p.e || 0;
       const color = p.ref != null ? PIN.ref : PIN[p.style] || PIN.point;
       const post = new THREE.Mesh(this.geoCyl, plainMaterial(color, 0.55));
       post.scale.set(0.011, 0.42, 0.011);
-      post.position.set(p.x, 0.21, -p.y);
+      post.position.set(p.x, e + 0.21, -p.y);
       this.vizGroup.add(post);
       const head = new THREE.Mesh(this.geoSphere, plainMaterial(color, 0.45));
       const r = p.ref != null || p.isLast ? 0.055 : 0.042;
       head.scale.set(r, r, r);
-      head.position.set(p.x, 0.44, -p.y);
+      head.position.set(p.x, e + 0.44, -p.y);
       this.vizGroup.add(head);
       // generous invisible hit bubble
       const hit = new THREE.Mesh(this.geoSphere, new THREE.MeshBasicMaterial({ visible: true, transparent: true, opacity: 0 }));
       hit.scale.set(0.16, 0.3, 0.16);
-      hit.position.set(p.x, 0.3, -p.y);
+      hit.position.set(p.x, e + 0.3, -p.y);
       this.vizGroup.add(hit);
       this.tapTargets.push({ mesh: hit, pointId: p.id });
     }
     for (const g of viz.ghosts || []) {
+      const e = g.e || 0;
       const pillar = new THREE.Mesh(this.geoCyl, new THREE.MeshLambertMaterial({
         color: PIN.ghost, transparent: true, opacity: g.primary ? 0.45 : 0.16, depthWrite: false,
       }));
       pillar.scale.set(0.06, 1.1, 0.06);
-      pillar.position.set(g.x, 0.55, -g.y);
+      pillar.position.set(g.x, e + 0.55, -g.y);
       this.vizGroup.add(pillar);
       const hit = new THREE.Mesh(this.geoSphere, new THREE.MeshBasicMaterial({ transparent: true, opacity: 0 }));
       hit.scale.set(0.2, 0.7, 0.2);
-      hit.position.set(g.x, 0.55, -g.y);
+      hit.position.set(g.x, e + 0.55, -g.y);
       this.vizGroup.add(hit);
       this.tapTargets.push({ mesh: hit, ghostSide: g.side });
     }
     for (const c of viz.circles || []) {
       const line = new THREE.LineLoop(this.geoCircleLine, new THREE.LineBasicMaterial({ color: 0xa39d8c }));
       line.scale.set(c.r, 1, c.r);
-      line.position.set(c.cx, 0.02, -c.cy);
+      line.position.set(c.cx, (c.e || 0) + 0.02, -c.cy);
       this.vizGroup.add(line);
     }
     for (const s of viz.rays || []) {
+      const e = (s.e || 0) + 0.02;
       const geo = this.geo(new THREE.BufferGeometry().setFromPoints([
-        new THREE.Vector3(s.x1, 0.02, -s.y1), new THREE.Vector3(s.x2, 0.02, -s.y2),
+        new THREE.Vector3(s.x1, e, -s.y1), new THREE.Vector3(s.x2, e, -s.y2),
       ]));
       this.vizGroup.add(new THREE.Line(geo, new THREE.LineBasicMaterial({ color: 0xa39d8c })));
     }

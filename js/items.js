@@ -9,6 +9,7 @@ export const CATEGORIES = {
   door:       { label: 'door',       color: 0x9a7a50 },
   radiator:   { label: 'radiator',   color: 0xa85454 },
   extraction: { label: 'extraction', color: 0x5b6770 },
+  stairs:     { label: 'stairs',     color: 0x8a7f66 },
   other:      { label: 'other',      color: 0x8a8a8a },
 };
 
@@ -33,4 +34,12 @@ export const PRESETS = [
   { name: 'door', category: 'door', w: 0.9, d: 0.15, h: 2.0, z0: 0 },
   { name: 'radiator', category: 'radiator', w: 1.0, d: 0.1, h: 0.6, z0: 0.15 },
   { name: 'cooker hood', category: 'extraction', w: 0.9, d: 0.5, h: 0.4, z0: 1.95 },
+  // w = horizontal run of the flight (ascends along +w), d = stair width,
+  // h = total rise (usually the floor-to-floor height).
+  { name: 'staircase', category: 'stairs', w: 2.7, d: 0.85, h: 2.9, z0: 0 },
 ];
+
+// Steps in a flight from its total rise, aiming for ~18 cm risers.
+export function stairSteps(rise) {
+  return Math.max(2, Math.round(rise / 0.18));
+}

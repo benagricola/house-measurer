@@ -545,6 +545,73 @@ st = await state();
 assert(st.points.length === 4 && st.items.length === 4 && st.walls.length === 1, 'full state survives reload');
 await shot('10-after-reload');
 
+// --- floors + stairs --------------------------------------------------------
+// Add an upstairs, anchor it by stacking two ground-floor points, measure a
+// room up there, and put a staircase on the ground floor.
+await click('#modebar [data-mode="measure"]');
+await click('#log-btn');
+await js(`document.getElementById('new-floor-name').value = 'upstairs'; document.getElementById('new-floor-off').value = 290;`);
+await js(`[...document.querySelectorAll('#log-list [data-act="addf"]')].at(0).click()`);
+st = await state();
+assert(st.floors.length === 2 && st.activeFloor === st.floors[1].id, 'upstairs added and active');
+assert(near(st.floors[1].elevation, 2.9), 'elevation from floor-to-floor offset');
+
+await js('window.app.ui.refs = []; window.app.render();');
+await tapPoint('A'); // ghosted ground-floor point
+await tapPoint('B');
+assert(await js(`document.getElementById('stack-btn').style.display`) !== 'none', 'stack button offered for off-floor refs');
+await click('#stack-btn');
+st = await state();
+assert(st.points.length === 6, 'two stacked twins created');
+const twins = st.points.slice(-2);
+assert(twins.every((p) => p.floor === st.activeFloor && p.fix?.stack != null), 'twins live upstairs, stacked');
+const twinGap = await js(`(() => {
+  const s = window.app.store, pts = s.state.points;
+  const p = (i) => s.solved.pos.get(pts[i].id);
+  return Math.hypot(p(0).x - p(4).x, p(0).y - p(4).y) + Math.hypot(p(1).x - p(5).x, p(1).y - p(5).y);
+})()`);
+assert(twinGap < 1e-9, 'stacked twins share their owner plan coordinates');
+refs = await js('window.app.ui.refs.map(id => window.app.store.point(id).name)');
+assert(refs.join(',') === `${twins[0].name},${twins[1].name}`, `refs swapped to the twins (${refs})`);
+
+await keys(['4', '2', '7']);
+await key('ok');
+await keys(['2', '5', '0']);
+await key('ok');
+st = await state();
+assert(st.points.length === 7 && st.points.at(-1).floor === st.activeFloor, 'upstairs point committed');
+assert(st.walls.at(-1).floor === st.activeFloor && st.walls.at(-1).pts.length === 3, 'upstairs auto-wall run E-F-G');
+await click('#close-room');
+await key('ok');
+st = await state();
+assert(st.walls.length === 2 && st.walls.at(-1).closed, 'upstairs room closed');
+
+await click('#floor-btn');
+assert((await state()).activeFloor === 'f0', 'floor button cycles back to ground');
+await click('#modebar [data-mode="item"]');
+await click('#item-new');
+await js(`
+  document.getElementById('if-name').value = 'stairs';
+  document.getElementById('if-category').value = 'stairs';
+  document.getElementById('if-w').value = 270;
+  document.getElementById('if-d').value = 85;
+  document.getElementById('if-h').value = 290;
+`);
+await click('#if-place-drop');
+st = await state();
+assert(st.items.at(-1).category === 'stairs' && st.items.at(-1).floor === 'f0', 'staircase dropped on ground floor');
+
+await click('#view3d-btn');
+await sleep(700);
+assert(await js('window.app.view3d.wallRecs.some(w => w.mesh.position.y > 2.5)'), '3D: upstairs walls at elevation');
+const stairKids = await js(`(() => {
+  const g = [...window.app.view3d.group.children].filter(o => o.isGroup).map(o => o.children.length);
+  return Math.max(...g, 0);
+})()`);
+assert(stairKids >= 14, `3D: staircase rendered as steps (${stairKids})`);
+await shot('13-two-floors');
+await click('#view3d-btn');
+
 await send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false });
 await sleep(400);
 await shot('11-desktop');

@@ -112,6 +112,7 @@ header button:disabled { opacity: 0.35; }
   pointer-events: none;
 }
 .lbl.name { font-weight: 700; color: var(--navy); }
+.lbl.name.faint { font-weight: 400; color: #b0aa9a; font-size: 11px; }
 .lbl.ray {
   font-size: 11px;
   color: var(--muted);
@@ -349,6 +350,18 @@ header button.on, #modebar button.on {
 #wallbar button { flex: 1; padding: 12px 0; }
 #movebar button:disabled { opacity: 0.4; }
 #check-btn { padding: 5px 12px; font-size: 13px; color: var(--teal); border-color: var(--teal); }
+#stack-btn { padding: 5px 12px; font-size: 13px; color: var(--amber); border-color: var(--amber); font-weight: 700; }
+#floor-btn {
+  flex: 0 0 auto !important;
+  color: #fff !important;
+  background: var(--navy) !important;
+  border-color: var(--navy) !important;
+  padding: 8px 10px !important;
+  max-width: 88px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 #itembar { display: flex; flex-direction: column; gap: 6px; }
 #item-list { max-height: 26dvh; overflow-y: auto; }
 .item-row {

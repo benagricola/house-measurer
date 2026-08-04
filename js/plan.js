@@ -21,6 +21,8 @@ const COLORS = {
   ray: 0xb0aa9c,
   wall: 0x3a3a40,
   wallActive: 0xe8960c,
+  wallGhost: 0xc4beae,
+  ghostpt: 0xb5af9f,
   circle: 0xc9c3b2,
   anchor: 0x1f2a44,
   point: 0x0e7a6f,
@@ -208,6 +210,7 @@ export class PlanView {
       if (seg.style === 'ab') { widthPx = 2.5; color = COLORS.segment; z = 0.5; }
       if (seg.style === 'wall') { widthPx = Math.max(3, 0.08 / s); color = COLORS.wall; z = 0.55; }
       if (seg.style === 'wallActive') { widthPx = Math.max(3, 0.08 / s); color = COLORS.wallActive; z = 0.56; }
+      if (seg.style === 'wallGhost') { widthPx = Math.max(2, 0.08 / s); color = COLORS.wallGhost; z = 0.3; }
       this.group.add(this.quad(seg.x1, seg.y1, seg.x2, seg.y2, widthPx * s, color, z));
     }
 
@@ -247,7 +250,7 @@ export class PlanView {
     }
 
     for (const p of c.points || []) {
-      const r = (p.style === 'anchor' ? 8 : 7) * s;
+      const r = (p.style === 'anchor' ? 8 : p.style === 'ghostpt' ? 5 : 7) * s;
       const color = COLORS[p.style] || COLORS.point;
       const dot = new THREE.Mesh(this.geoCircle, this.mat('mesh', color));
       dot.position.set(p.x, p.y, 1);

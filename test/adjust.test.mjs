@@ -96,24 +96,25 @@ test('itemCorners and pointInItem respect rotation', () => {
 
 test('store: anchors start a wall run; points auto-chain; close; heights', () => {
   const st = new Store(memStorage());
-  const { a, b, wallId } = st.setAnchors(4);
-  assert.ok(wallId != null, 'anchor commit starts the wall run');
-  assert.deepEqual(st.state.walls[0].pts, [a, b]);
+  const { a, b } = st.setAnchors(4);
+  const run = st.openWall();
+  assert.ok(run, 'anchor commit starts the wall run');
+  assert.deepEqual(run.pts, [a, b]);
+  const wallId = run.id;
 
-  const c = st.addPoint(a, b, 3, 5, 1, { appendWall: wallId });
+  const c = st.addPoint(a, b, 3, 5, 1, { autoWall: true });
   assert.deepEqual(st.state.walls[0].pts, [a, b, c], 'point appended to the run');
-  assert.equal(st.hasClosedRoom, false);
-  assert.equal(st.openWall().id, wallId);
+  assert.equal(st.hasClosedRoomOn(st.state.activeFloor), false);
 
   assert.equal(st.closeWall(wallId), true);
   assert.equal(st.state.walls[0].closed, true);
-  assert.equal(st.hasClosedRoom, true);
+  assert.equal(st.hasClosedRoomOn(st.state.activeFloor), true);
   assert.equal(st.openWall(), null);
 
   st.setWallHeight(wallId, 2.4);
   assert.equal(st.wall(wallId).height, 2.4);
 
-  // After a closed room, addPoint without appendWall leaves walls alone.
+  // After a closed room, addPoint without autoWall leaves walls alone.
   const d = st.addPoint(a, c, 2, 2.5, 1);
   assert.equal(st.state.walls[0].pts.length, 3);
   assert.ok(st.point(d));
@@ -176,7 +177,7 @@ test('store: items, layers, visibility, mount cleanup on wall delete', () => {
   assert.equal(st.item(item2).layer, lay);
 });
 
-test('store: v1 state in storage migrates to v2 shape', () => {
+test('store: v1 state in storage migrates to current shape', () => {
   const storage = memStorage();
   storage.setItem('house-measurer.v1', JSON.stringify({
     state: {
@@ -190,14 +191,16 @@ test('store: v1 state in storage migrates to v2 shape', () => {
   }));
   const st = new Store(storage);
   st.load();
-  assert.equal(st.state.v, 2);
+  assert.equal(st.state.v, 3);
   assert.deepEqual(st.state.walls, []);
   assert.deepEqual(st.state.items, []);
   assert.equal(st.state.layers[0].id, 'current');
+  assert.equal(st.state.floors[0].id, 'f0');
+  assert.equal(st.state.points[0].floor, 'f0');
   assert.equal(st.state.roomHeight, 2.6);
   // Undoing into a v1 snapshot must also come back migrated.
   assert.ok(st.undo());
-  assert.equal(st.state.v, 2);
+  assert.equal(st.state.v, 3);
   assert.deepEqual(st.state.walls, []);
 });
 
@@ -212,6 +215,91 @@ test('store: measurement edit and delete recompute the solution', () => {
   assert.ok(st.solved.errors.has(c), 'point unsolvable after losing a fix measurement');
   st.undo();
   assert.ok(!st.solved.errors.has(c));
+});
+
+test('solve + adjust: stacked points ride their owner', () => {
+  const s = {
+    points: [
+      { id: 1, name: 'A', fix: null },
+      { id: 2, name: 'B', fix: null },
+      { id: 3, name: 'C', fix: { stack: 1 } },          // above A
+      { id: 4, name: 'D', fix: { stack: 2 } },          // above B
+      { id: 5, name: 'E', fix: { r1: 3, r2: 4, side: 1 } }, // fixed from the twins
+    ],
+    measurements: [
+      { id: 10, p: 1, q: 2, d: 4 },
+      { id: 11, p: 3, q: 5, d: 3 },
+      { id: 12, p: 4, q: 5, d: 5 },
+    ],
+  };
+  const r = solveAdjusted(s);
+  close(r.pos.get(3).x, 0, 1e-6);
+  close(r.pos.get(4).x, 4, 1e-6);
+  close(r.pos.get(5).x, 0, 1e-3);
+  close(r.pos.get(5).y, 3, 1e-3);
+  // A redundant cross-check through a stacked twin still lands on the owner.
+  s.measurements.push({ id: 13, p: 1, q: 5, d: 3.02 });
+  const r2 = solveAdjusted(s);
+  assert.ok(Math.abs(r2.mres.get(13)) < 0.02, 'stacked-twin measurement participates in LSQ');
+  assert.ok(r2.pres.get(5) > 0.005, 'residual attributed');
+});
+
+test('store: floors, stacked points, per-floor auto-walling', () => {
+  const st = new Store(memStorage());
+  const { a, b } = st.setAnchors(4);
+  const c = st.addPoint(a, b, 3, 5, 1, { autoWall: true });
+  const w1 = st.openWall();
+  assert.equal(w1.pts.length, 3);
+  st.closeWall(w1.id);
+
+  const f2 = st.addFloor('upstairs', 2.9);
+  assert.equal(st.state.activeFloor, f2);
+  assert.equal(st.openWall(), null, 'open-wall lookup is per floor');
+  assert.equal(st.hasClosedRoomOn(f2), false);
+  assert.equal(st.hasClosedRoomOn('f0'), true);
+
+  const a2 = st.addStackedPoint(a, { autoWall: true });
+  const b2 = st.addStackedPoint(b, { autoWall: true });
+  assert.equal(st.point(a2).floor, f2);
+  assert.deepEqual(st.openWall().pts, [a2, b2], 'stacked points start the upstairs run');
+  const p1 = st.solved.pos.get(a2);
+  close(p1.x, 0); close(p1.y, 0);
+  close(st.solved.pos.get(b2).x, 4);
+
+  const e = st.addPoint(a2, b2, 3, 5, 1, { autoWall: true });
+  close(st.solved.pos.get(e).y, 3);
+  assert.equal(st.point(e).floor, f2);
+  assert.equal(st.openWall().pts.length, 3);
+
+  st.setFloorElevation(f2, 3.0);
+  assert.equal(st.floor(f2).elevation, 3);
+  assert.equal(st.deleteFloor(f2), false, 'occupied floor cannot be deleted');
+  st.setActiveFloor('f0');
+  assert.equal(st.state.activeFloor, 'f0');
+});
+
+test('store: v2 state migrates to v3 with floor stamps', () => {
+  const storage = memStorage();
+  storage.setItem('house-measurer.v1', JSON.stringify({
+    state: {
+      v: 2,
+      points: [{ id: 1, name: 'A', fix: null }, { id: 2, name: 'B', fix: null }],
+      measurements: [{ id: 3, p: 1, q: 2, d: 4 }],
+      walls: [{ id: 9, pts: [1, 2], closed: false }],
+      items: [{ id: 5, name: 'x', category: 'other', layer: 'current', w: 1, d: 1, h: 1, x: 0, y: 0, rot: 0, z0: 0 }],
+      layers: [{ id: 'current', name: 'current', visible: true }],
+      activeLayer: 'current',
+      roomHeight: 2.6,
+    },
+    undoStack: [], redoStack: [], nextId: 10,
+  }));
+  const st = new Store(storage);
+  st.load();
+  assert.equal(st.state.v, 3);
+  assert.equal(st.state.floors[0].id, 'f0');
+  assert.equal(st.state.points[0].floor, 'f0');
+  assert.equal(st.state.walls[0].floor, 'f0');
+  assert.equal(st.state.items[0].floor, 'f0');
 });
 
 test('store: importState replaces and is undoable', () => {
