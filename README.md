@@ -39,7 +39,12 @@ client-side, state in localStorage, no build step.
    overlays the interior angle at every wall corner (reflex corners like
    chimney breasts read > 180) and the construction circles behind the
    last or any single selected point; while typing a new point, the angle
-   the proposed wall would make with the run previews live.
+   the proposed wall would make with the run previews live. Points whose
+   two fix rays meet at a poor angle (under 30 or over 150 degrees) get a
+   "fix N°" badge: their circles cross at a glancing angle, so laser
+   noise is amplified into position error that no residual can reveal -
+   re-fix such points from a better-spread reference pair, or tie them
+   down with a recorded check measurement.
 5. Measuring also works inside the 3D view: the survey pins are tappable
    as references, candidates appear as pillars, and the measurement
    circles draw across the floor.

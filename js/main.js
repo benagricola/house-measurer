@@ -1215,6 +1215,26 @@ function renderPlan() {
     }
   }
 
+  // Detail view: flag ill-conditioned fixes - rays meeting at a shallow
+  // (or near-straight) angle mean the circles cross at a glancing angle,
+  // so millimetres of laser noise become centimetres of position error
+  // with no residual to show for it.
+  if (ui.showWork) {
+    for (const pt of pts) {
+      if (!onFloor(pt) || !pt.fix || pt.fix.stack != null) continue;
+      const p = pos(pt.id), r1 = pos(pt.fix.r1), r2 = pos(pt.fix.r2);
+      if (!p || !r1 || !r2) continue;
+      const ang = angleDeg(r1, p, r2);
+      if (ang >= 30 && ang <= 150) continue;
+      const bad = ang < 15 || ang > 165;
+      content.labels.push({
+        key: `fq${pt.id}`, x: p.x, y: p.y, dy: 30,
+        text: `fix ${Math.round(ang)}°`,
+        cls: bad ? 'res err' : 'res warn',
+      });
+    }
+  }
+
   // Detail view: interior angles at every wall corner on this floor.
   if (ui.showWork) {
     const off = 26 * plan.worldPerPx;
