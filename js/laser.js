@@ -76,6 +76,23 @@ export function parseDistoFrame(bytes) {
   return parseFloat32Frame(bytes);
 }
 
+// Bosch GLM family (MT protocol): responses carry the distance as a
+// uint32 LE in 0.05 mm units, typically after a 2-3 byte status/length
+// header (community-documented for GLM 50 C and relatives). Tried before
+// the generic heuristics because those would misread 0.05 mm units.
+export function parseBoschFrame(bytes) {
+  if (bytes.length >= 6) {
+    const dv = new DataView(new Uint8Array(bytes).buffer);
+    for (const o of [2, 3, 4]) {
+      if (o + 4 > bytes.length) continue;
+      const raw = dv.getUint32(o, true);
+      const metres = raw * 0.05 / 1000;
+      if (raw > 0 && metres >= PLAUSIBLE_MIN && metres <= PLAUSIBLE_MAX) return metres;
+    }
+  }
+  return parseAnyFrame(bytes);
+}
+
 // --- known device profiles --------------------------------------------------
 
 const PROFILES = [
@@ -87,7 +104,12 @@ const PROFILES = [
   {
     name: 'Bosch GLM/PLR',
     service: '02a6c0d0-0451-4000-b000-fb3210111989',
-    parse: parseAnyFrame,
+    parse: parseBoschFrame,
+  },
+  {
+    name: 'Bosch (new DIY line)',
+    service: '00005301-0000-0041-5253-534f46540000',
+    parse: parseBoschFrame,
   },
   {
     name: 'UART meter',
@@ -131,52 +153,83 @@ export class LaserLink {
   async connect() {
     const problem = this.secureContextProblem;
     if (problem) return this.status(problem, 'warn');
+    // Access to a service after connecting requires it to be listed here,
+    // even when the chooser matched on name.
+    const optionalServices = PROFILES.map((p) => p.service);
     try {
       this.status('Choose your laser measure in the picker...');
-      this.device = await navigator.bluetooth.requestDevice({
-        filters: PROFILES.map((p) => ({ services: [p.service] })),
-        optionalServices: PROFILES.map((p) => p.service),
-      });
+      this.device = await navigator.bluetooth.requestDevice(this._allDevicesNext
+        ? { acceptAllDevices: true, optionalServices }
+        : {
+          // Most meters do NOT advertise their measurement service UUID,
+          // only a name - so filter primarily by name prefix.
+          filters: [
+            ...PROFILES.map((p) => ({ services: [p.service] })),
+            { namePrefix: 'Bosch' }, { namePrefix: 'GLM' }, { namePrefix: 'PLR' },
+            { namePrefix: 'Universal' }, { namePrefix: 'UD' },
+            { namePrefix: 'Leica' }, { namePrefix: 'DISTO' },
+          ],
+          optionalServices,
+        });
+      this._allDevicesNext = false;
       this.device.addEventListener('gattserverdisconnected', () => {
         this.connected = false;
         this.status('Laser disconnected', 'warn');
       });
       const server = await this.device.gatt.connect();
+      // Discovery mode: hook every notify characteristic we are allowed to
+      // see; decode with the matching profile parser or the heuristic.
+      let services = [];
+      try { services = await server.getPrimaryServices(); } catch {}
       let hooked = 0;
-      for (const profile of PROFILES) {
-        let service;
-        try {
-          service = await server.getPrimaryService(profile.service);
-        } catch {
-          continue;
-        }
-        const chars = await service.getCharacteristics();
+      let pokeTarget = null;
+      for (const service of services) {
+        const uuid = service.uuid;
+        const profile = PROFILES.find((p) =>
+          typeof p.service === 'string' ? p.service === uuid : uuid.startsWith('0000ffe0'));
+        let chars = [];
+        try { chars = await service.getCharacteristics(); } catch { continue; }
         for (const ch of chars) {
+          if (ch.properties.write || ch.properties.writeWithoutResponse) {
+            if (!pokeTarget) pokeTarget = ch;
+          }
           if (!ch.properties.notify && !ch.properties.indicate) continue;
           try {
             await ch.startNotifications();
+            const parse = profile?.parse ?? parseAnyFrame;
+            const tag = ch.uuid.slice(4, 8);
             ch.addEventListener('characteristicvaluechanged', (e) => {
-              this.handleFrame(new Uint8Array(e.target.value.buffer), profile);
+              this.handleFrame(new Uint8Array(e.target.value.buffer), { parse }, tag);
             });
             hooked++;
           } catch {}
         }
-        if (hooked) {
-          this.connected = true;
-          this.profile = profile;
-          this.status(`Laser connected (${this.device.name || profile.name}) - take a reading`, 'good');
-          return;
-        }
       }
-      this.status('Connected, but no readable measurement channel found - frames will be logged for decoding', 'warn');
       this.connected = hooked > 0;
+      if (hooked) {
+        this.status(`Laser connected (${this.device.name || 'unnamed'}) - take a reading on the device`, 'good');
+        // Bosch GLM-family meters stay silent until asked: the documented
+        // MT-protocol measurement request is harmless elsewhere (framed
+        // protocols ignore frames that fail their checksum).
+        if (pokeTarget) {
+          setTimeout(() => {
+            pokeTarget.writeValue(new Uint8Array([0xc0, 0x40, 0x00, 0xee])).catch(() => {});
+          }, 600);
+        }
+      } else {
+        this.status('Connected, but the device exposed no readable channel - tell the developer the model; frames may need a different service listed', 'warn');
+      }
     } catch (e) {
       // Brave ships Web Bluetooth disabled (fingerprinting protection):
       // requestDevice rejects without ever showing a chooser.
       if (navigator.brave && (e.name === 'SecurityError' || e.name === 'NotFoundError')) {
         return this.status('Brave blocks Web Bluetooth by default: enable brave://flags/#brave-web-bluetooth-api and restart, or use Chrome.', 'warn');
       }
-      this.status(e.name === 'NotFoundError' ? 'No device chosen' : `Bluetooth: ${e.message}`, 'warn');
+      if (e.name === 'NotFoundError') {
+        this._allDevicesNext = true;
+        return this.status('No device chosen. If yours was not listed, tap laser again - the next picker shows ALL Bluetooth devices.', 'warn');
+      }
+      this.status(`Bluetooth: ${e.message}`, 'warn');
     }
   }
 
@@ -186,8 +239,9 @@ export class LaserLink {
     this.status('Laser disconnected');
   }
 
-  handleFrame(bytes, profile) {
-    const hex = [...bytes].map((b) => b.toString(16).padStart(2, '0')).join(' ');
+  handleFrame(bytes, profile, tag = '') {
+    const hex = (tag ? tag + ': ' : '')
+      + [...bytes].map((b) => b.toString(16).padStart(2, '0')).join(' ');
     this.rawLog.push(hex);
     if (this.rawLog.length > 24) this.rawLog.shift();
     this.cb.onRaw?.(hex);

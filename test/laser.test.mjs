@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   parseAsciiFrame, parseFloat32Frame, parseUint32mmFrame, parseAnyFrame,
-  parseDistoFrame,
+  parseDistoFrame, parseBoschFrame,
 } from '../js/laser.js';
 
 const close = (a, b, eps = 1e-4) => assert.ok(a != null && Math.abs(a - b) < eps, `${a} !~ ${b}`);
@@ -44,4 +44,11 @@ test('parseAnyFrame prefers ascii, then float32, then mm', () => {
 
 test('Leica DISTO frame: bare float32 metres', () => {
   close(parseDistoFrame(f32(7.654)), 7.654);
+});
+
+test('Bosch MT frame: uint32 in 0.05 mm units after status header', () => {
+  // 3.425 m = 68500 raw = 94 0b 01 00 LE, after a 2-byte header.
+  close(parseBoschFrame([0x00, 0x10, 0x94, 0x0b, 0x01, 0x00, 0x1a]), 3.425);
+  // Falls back to the generic heuristic for non-MT shapes.
+  close(parseBoschFrame([...'2.345'].map((c) => c.charCodeAt(0))), 2.345);
 });
