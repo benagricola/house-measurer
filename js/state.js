@@ -239,13 +239,17 @@ export class Store {
   }
 
   // autoWall: chain the new point into the active floor's open wall run in
-  // the same undo step.
-  addPoint(r1, r2, d1, d2, side, { autoWall = false } = {}) {
+  // the same undo step. extras: additional [{p, d}] distances to more
+  // references, committed atomically - the redundancy that lets the
+  // least-squares fit average noise down and expose blunders.
+  addPoint(r1, r2, d1, d2, side, { autoWall = false, extras = [] } = {}) {
     const id = this.nextId++, m1 = this.nextId++, m2 = this.nextId++;
+    const extraIds = extras.map(() => this.nextId++);
     this.commit((s) => {
       s.points.push({ id, name: this.nextName(), fix: { r1, r2, side }, floor: s.activeFloor });
       s.measurements.push({ id: m1, p: r1, q: id, d: d1 });
       s.measurements.push({ id: m2, p: r2, q: id, d: d2 });
+      extras.forEach((e, i) => s.measurements.push({ id: extraIds[i], p: e.p, q: id, d: e.d }));
       if (autoWall) this._autoWallAppend(s, id);
     });
     return id;

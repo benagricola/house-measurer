@@ -221,6 +221,7 @@ header button:disabled { opacity: 0.35; }
   color: var(--muted);
   justify-content: center;
 }
+#refslots { display: inline-flex; gap: 6px; flex-wrap: wrap; }
 .refslot {
   border: 1px dashed var(--line);
   color: var(--muted);
@@ -230,6 +231,7 @@ header button:disabled { opacity: 0.35; }
   min-width: 64px;
   text-align: center;
 }
+.refslot.extra { min-width: 44px; opacity: 0.6; padding: 4px 8px; }
 .refslot.set {
   border: 1px solid var(--amber);
   background: #fff;

@@ -20,7 +20,8 @@ store.load();
 const ui = {
   mode: 'measure',   // measure | wall | item | move
   view: 'plan',      // plan | 3d
-  refs: [],          // up to two point ids selected as references
+  refs: [],          // up to four point ids selected as references
+  multiD: [],        // collected distances when more than two refs are set
   fields: ['', ''],  // raw keypad strings
   active: 0,
   lastId: null,      // last committed point (flip target in measure mode)
@@ -97,17 +98,35 @@ function visibleLayers() {
 }
 
 function validateUi() {
+  const before = ui.refs.length;
   ui.refs = ui.refs.filter((id) => store.point(id) && pos(id));
+  if (ui.refs.length !== before) ui.multiD = [];
+  if (!Array.isArray(ui.multiD)) ui.multiD = [];
   if (ui.lastId && !store.point(ui.lastId)) ui.lastId = null;
   if (ui.selItem && !store.item(ui.selItem)) ui.selItem = null;
   if (ui.activeWallId && !store.wall(ui.activeWallId)) ui.activeWallId = null;
 }
 
-// Candidate positions from the two typed distances against the two refs.
+// Multi-reference fixing: past the first two refs, distances are entered
+// one at a time into ui.multiD.
+const multiMode = () =>
+  !ui.flow && ui.mode === 'measure' && !anchorMode() && ui.refs.length > 2;
+
+// Candidate positions from the first two distances against the first two
+// refs (extra references refine the fix through least squares on commit).
 function preview() {
-  if (ui.refs.length !== 2 || !twoFieldFlow()) return null;
-  const d1 = parseDistance(ui.fields[0]);
-  const d2 = parseDistance(ui.fields[1]);
+  if (ui.refs.length < 2 || !twoFieldFlow()) return null;
+  let d1, d2;
+  if (multiMode()) {
+    const k = ui.multiD.length;
+    d1 = ui.multiD[0] ?? (k === 0 ? parseDistance(ui.fields[0]) : null);
+    d2 = ui.multiD[1] ?? (k === 1 ? parseDistance(ui.fields[0]) : null);
+  } else if (ui.refs.length !== 2) {
+    return null;
+  } else {
+    d1 = parseDistance(ui.fields[0]);
+    d2 = parseDistance(ui.fields[1]);
+  }
   if (d1 == null || d2 == null) return { d1, d2, cands: null };
   const c = circleIntersect(pos(ui.refs[0]), d1, pos(ui.refs[1]), d2);
   if (!c.ok) return { d1, d2, cands: null };
@@ -237,8 +256,9 @@ function commitItemAt(rect, draft, mount = null) {
 function toggleRef(id) {
   const i = ui.refs.indexOf(id);
   if (i >= 0) ui.refs.splice(i, 1);
-  else if (ui.refs.length < 2) ui.refs.push(id);
-  else ui.refs = [id];
+  else if (ui.refs.length < 4) ui.refs.push(id);
+  else return say('Four references is the maximum - tap one to deselect it first', 'warn');
+  ui.multiD = [];
   ui.message = null;
   render();
 }
@@ -349,6 +369,47 @@ function commitPoint(side) {
     ? ' - "close room" when you are back at the start'
     : '';
   say(`${name} placed - flip if it is on the wrong side${wallHint}`, 'good');
+}
+
+// Commit a point fixed against 3-4 references: the first two form the
+// chain fix, the rest become bundled check measurements so least squares
+// balances everything at once. With a third distance the mirror ambiguity
+// resolves itself - the side whose candidate best matches the extra
+// distances wins (a tapped ghost still overrides).
+function commitMultiPoint(forcedSide = null) {
+  const off = offFloorRefs();
+  if (off.length) {
+    return say(`${off.map((id) => store.point(id).name).join(', ')} is on another floor - press "stack here" first`, 'warn');
+  }
+  const d = ui.multiD;
+  const c = circleIntersect(pos(ui.refs[0]), d[0], pos(ui.refs[1]), d[1]);
+  if (!c.ok) return say('The first two references coincide', 'warn');
+  if (c.gap > CLAMP_TOL) return say(gapExplain(c, d[0], d[1]) + ' (Escape restarts the fix)', 'err');
+  const m = d.length;
+  const extraRefs = ui.refs.slice(2, m);
+  let side = forcedSide;
+  if (side == null) {
+    let sumL = 0, sumR = 0;
+    extraRefs.forEach((r, i) => {
+      const rp = pos(r);
+      sumL += Math.abs(Math.hypot(c.left.x - rp.x, c.left.y - rp.y) - d[i + 2]);
+      sumR += Math.abs(Math.hypot(c.right.x - rp.x, c.right.y - rp.y) - d[i + 2]);
+    });
+    side = extraRefs.length ? (sumL <= sumR ? 1 : -1) : 1;
+  }
+  const name = store.nextName();
+  const autoWall = !store.hasClosedRoomOn(activeFloor()) && ui.wallPause !== true;
+  ui.lastId = store.addPoint(ui.refs[0], ui.refs[1], d[0], d[1], side, {
+    autoWall, extras: extraRefs.map((r, i) => ({ p: r, d: d[i + 2] })),
+  });
+  ui.multiD = [];
+  ui.fields = ['', ''];
+  ui.active = 0;
+  const p = pos(ui.lastId);
+  if (p && !plan.isOnScreen(p.x, p.y)) plan.fitAll([...store.solved.pos.values()]);
+  const res = (store.solved.pres.get(ui.lastId) || 0) * 100;
+  const cls = res < 1 ? 'good' : res < 3 ? 'warn' : 'err';
+  say(`${name} fixed from ${2 + extraRefs.length} references (side chosen automatically) - worst residual ${res.toFixed(1)} cm`, cls);
 }
 
 // Replace every off-floor reference with a stacked twin pinned to this
@@ -481,6 +542,18 @@ function pressOk() {
     return say('Tap the rectangle that matches reality (flip swaps), OK commits');
   }
 
+  if (multiMode()) {
+    const v = parseDistance(ui.fields[0]);
+    if (v == null) {
+      return say(`Type the distance to ${store.point(ui.refs[ui.multiD.length])?.name}`, 'warn');
+    }
+    ui.multiD.push(v);
+    ui.fields = ['', ''];
+    ui.active = 0;
+    if (ui.multiD.length >= ui.refs.length) return commitMultiPoint();
+    return render();
+  }
+
   if (twoFieldFlow()) {
     if (ui.active === 0 && parseDistance(ui.fields[1]) == null) {
       if (parseDistance(ui.fields[0]) == null) return say('Type the distance to the first reference', 'warn');
@@ -589,7 +662,9 @@ function handleTap(world, screen) {
       for (const [side, p] of [[+1, pv.cands.left], [-1, pv.cands.right]]) {
         const sp = plan.worldToScreen(p.x, p.y);
         if (Math.hypot(sp.x - screen.x, sp.y - screen.y) < 30) {
-          commitPoint(side);
+          if (multiMode() && ui.multiD.length >= 2) commitMultiPoint(side);
+          else if (!multiMode()) commitPoint(side);
+          else return false;
           return true;
         }
       }
@@ -998,6 +1073,10 @@ function fieldLabel(i) {
     return i === 0 ? `${store.point(m?.p)?.name ?? '?'} to ${store.point(m?.q)?.name ?? '?'}` : '';
   }
   if (ui.flow?.kind === 'room-height') return i === 0 ? 'ceiling height' : '';
+  if (multiMode()) {
+    const k = ui.multiD.length;
+    return i === 0 ? `to ${store.point(ui.refs[k])?.name ?? '?'} (${k + 1} of ${ui.refs.length})` : '';
+  }
   if (ui.flow?.kind === 'wall-edit') {
     const w = store.wall(ui.flow.wallId);
     if (i === 0) {
@@ -1017,7 +1096,7 @@ function fieldLabel(i) {
 function renderPanel() {
   const anchor = anchorMode();
   const oneField = ui.flow?.kind === 'item-walloffset' || ui.flow?.kind === 'edit-meas'
-    || ui.flow?.kind === 'room-height';
+    || ui.flow?.kind === 'room-height' || multiMode();
   const noFields = ui.flow?.kind === 'item-side' || ui.flow?.kind === 'item-wallmount';
   const showKeypad = ui.mode === 'measure' || anchor || ui.flow;
   const showFields = showKeypad && !noFields;
@@ -1048,11 +1127,18 @@ function renderPanel() {
   }
 
   if ($('refbar').style.display !== 'none') {
-    for (const i of [0, 1]) {
-      const slot = $(`ref${i}`);
+    // Slots grow with the selection (2 minimum, 4 maximum). A filled chip
+    // taps off; the trailing faint slot hints that more references help.
+    const slots = $('refslots');
+    slots.innerHTML = '';
+    const shown = Math.max(2, Math.min(4, ui.refs.length + (ui.flow ? 0 : 1)));
+    for (let i = 0; i < shown; i++) {
       const id = ui.refs[i];
-      slot.textContent = id ? store.point(id).name : `tap ref ${i + 1}`;
-      slot.classList.toggle('set', !!id);
+      const el = document.createElement('span');
+      el.className = 'refslot' + (id ? ' set' : '') + (i >= 2 && !id ? ' extra' : '');
+      el.textContent = id ? store.point(id).name : i < 2 ? `tap ref ${i + 1}` : '+ ref';
+      if (id) el.addEventListener('click', () => toggleRef(id));
+      slots.appendChild(el);
     }
     $('check-btn').style.display = ui.refs.length === 2 && !ui.flow && !offFloorRefs().length ? '' : 'none';
     $('stack-btn').style.display = !ui.flow && offFloorRefs().length ? '' : 'none';
@@ -1125,6 +1211,13 @@ function renderPanel() {
     else if (ui.mode === 'item') msg = { text: 'Tap an item to edit it, or add a new one', cls: '' };
     else if (ui.flow) msg = { text: '', cls: '' };
     else if (ui.refs.length < 2) msg = { text: 'Tap 2 reference points on the plan', cls: '' };
+    else if (multiMode()) {
+      const k = ui.multiD.length;
+      msg = {
+        text: `Multi-fix: distance ${k + 1} of ${ui.refs.length}, to ${store.point(ui.refs[k])?.name} - side picks itself from the extras`,
+        cls: '',
+      };
+    }
     else {
       const pv = preview();
       if (pv && pv.cands && pv.cands.gap > CLAMP_TOL) {
@@ -1621,6 +1714,11 @@ const laser = new LaserLink({
       say(`Laser: ${fmtDist(m)} for the first wall`, 'good');
       return commitAnchor();
     }
+    if (auto && multiMode() && !offFloorRefs().length) {
+      ui.fields[0] = txt;
+      ui.active = 0;
+      return pressOk(); // collects into the multi fix, commits on the last
+    }
     if (auto && ui.mode === 'measure' && !ui.flow
       && ui.refs.length === 2 && !offFloorRefs().length) {
       const d0 = parseDistance(ui.fields[0]);
@@ -1820,6 +1918,7 @@ window.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
     if (ui.flow) { endFlow('Cancelled'); return; }
     if (ui.fields[ui.active]) ui.fields[ui.active] = '';
+    else if (ui.multiD.length) ui.multiD = [];
     else ui.refs = [];
     return render();
   }

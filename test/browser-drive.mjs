@@ -842,6 +842,33 @@ await js('window.app.ui.autoLaser = false');
 await click('#undo');
 assert((await state()).points.length === beforeAuto.points.length, 'auto-committed point undoes in one step');
 
+// Multi-reference fixing: 3 refs, sequential distances, auto side.
+await js(`(() => {
+  const app = window.app, pts = app.store.state.points;
+  app.ui.refs = [pts[0].id, pts[1].id, pts[2].id];
+  app.ui.multiD = [];
+  app.render();
+})()`);
+assert(/1 of 3/.test(await js(`document.querySelector('#field0 label').textContent`)), 'multi-fix labels the sequence');
+await keys(['2', '0', '8']);
+await key('ok');
+await keys(['2', '1', '0']);
+await key('ok');
+assert(await js('window.app.ui.multiD.length') === 2, 'two distances collected');
+await keys(['2', '1', '9']);
+await key('ok');
+st = await state();
+assert(st.points.length === beforeAuto.points.length + 1, 'multi-fix commits after the last distance');
+assert(st.measurements.length === beforeAuto.measurements.length + 3, 'fix pair plus extra recorded atomically');
+assert(st.points.at(-1).fix.side === 1, 'side disambiguated by the third distance');
+const mp = await js('(() => { const s = window.app.store; return s.solved.pos.get(s.state.points.at(-1).id); })()');
+assert(mp.y > 0 && near(mp.x, 1.7, 0.05) && near(mp.y, 1.2, 0.05), `multi-fixed point lands where measured (${mp.x.toFixed(2)}, ${mp.y.toFixed(2)})`);
+const mres = await js('(() => { const s = window.app.store; return (s.solved.pres.get(s.state.points.at(-1).id) || 0) * 100; })()');
+assert(mres < 2, `redundant fix residual small (${mres.toFixed(2)} cm)`);
+await click('#undo');
+assert((await state()).points.length === beforeAuto.points.length, 'multi-fix undoes in one step');
+await js('window.app.ui.refs = []; window.app.render();');
+
 await send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false });
 await sleep(400);
 await shot('11-desktop');

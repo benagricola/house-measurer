@@ -350,6 +350,22 @@ test('store: deletePoint cleans up; freed names are reused, never duplicated', (
   assert.ok(!st.solved.errors.has(f));
 });
 
+test('store: addPoint extras commit atomically and feed the adjustment', () => {
+  const st = new Store(memStorage());
+  const { a, b } = st.setAnchors(4);
+  const c = st.addPoint(a, b, 3, 5, 1);            // C at (0, 3)
+  // New point fixed from A and B, with an extra check distance to C that
+  // disagrees by 2 cm - the fit should spread it as residuals.
+  const p = st.addPoint(a, b, Math.SQRT2 * 2, Math.hypot(2, 2 - 4) /*2.828*/, 1, {
+    extras: [{ p: c, d: Math.hypot(2, 3 - 2) + 0.02 }],
+  });
+  assert.equal(st.state.measurements.length, 6, 'fix pair + extra in one commit');
+  assert.ok(st.solved.pres.get(p) > 0.003, 'extra participates: residual appears');
+  st.undo();
+  assert.ok(!st.point(p), 'one undo removes point with all its measurements');
+  assert.equal(st.state.measurements.length, 3);
+});
+
 test('store: detachPointFromWalls and load-bearing measurement analysis', () => {
   const st = new Store(memStorage());
   const { a, b } = st.setAnchors(4);

@@ -16,6 +16,15 @@ client-side, state in localStorage, no build step.
    Both candidate positions are shown while you type - OK places the marked
    one, tapping the other candidate places that one instead, and the flip
    key swaps the last point afterwards.
+   Up to **four** references can be selected for one point: distances are
+   then entered one at a time (laser auto mode shoots them in sequence)
+   and commit together - the first two form the fix, the extras join the
+   least-squares adjustment immediately, so noise averages down, a bad
+   reading shows as a residual instead of silently shifting the point,
+   and the mirror ambiguity resolves itself from the third distance.
+   More references genuinely help; what matters most is spreading them in
+   direction (rays crossing at 60-120 degrees) - three references in a
+   narrow fan are barely better than two.
 3. Until the first room is closed, every committed point chains into the
    wall outline automatically - measure the corners in order round the
    room, then press **close room** and type the ceiling height (stored per
