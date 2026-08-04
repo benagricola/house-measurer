@@ -52,6 +52,11 @@ test('Bosch frames: 50-27/UniversalDistance indication and legacy MT reply', () 
   close(parseBoschFrame(frame), 3.4257);
   // Non-mm float values must survive (no resolution gate on exact frames).
   close(parseBoschFrame([0xc0, 0x55, 0x10, 0x06, 0, 0, 0, ...f32(1.2345678), 0]), 1.2345678, 1e-6);
+  // Short reply frame as captured live from a UniversalDistance 50C:
+  // status 0x00, len 0x04, float32 LE metres, crc.
+  close(parseBoschFrame([0x00, 0x04, ...f32(2.618), 0x5c]), 2.618);
+  // Its 0.0 payload means "no measurement" - must not produce a value.
+  assert.equal(parseBoschFrame([0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x5c]), null);
   // Legacy reply: uint32 LE in 0.05 mm units after a 2-byte header.
   close(parseBoschFrame([0x00, 0x10, 0x94, 0x0b, 0x01, 0x00, 0x1a]), 3.425);
   // Falls back to the generic heuristic for anything else.

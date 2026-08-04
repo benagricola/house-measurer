@@ -85,15 +85,22 @@ export function parseDistoFrame(bytes) {
 export const BOSCH_AUTOSYNC = [0xc0, 0x55, 0x02, 0x01, 0x00, 0x1a];
 
 export function parseBoschFrame(bytes) {
+  const dv = new DataView(new Uint8Array(bytes).buffer);
   if (bytes.length >= 11 && bytes[0] === 0xc0 && bytes[1] === 0x55 && bytes[2] === 0x10) {
-    const dv = new DataView(new Uint8Array(bytes).buffer);
     const v = dv.getFloat32(7, true);
     if (isFinite(v) && v >= PLAUSIBLE_MIN && v <= PLAUSIBLE_MAX) return v;
+  }
+  // Short reply frame, observed live on a UniversalDistance 50C:
+  // [status 0x00, len 0x04, float32 LE metres, crc]. A payload of 0.0
+  // means "no measurement" and must not type a zero into the field.
+  if (bytes.length >= 7 && bytes[0] === 0x00 && bytes[1] === 0x04) {
+    const v = dv.getFloat32(2, true);
+    if (isFinite(v) && v >= PLAUSIBLE_MIN && v <= PLAUSIBLE_MAX) return v;
+    if (v === 0) return null;
   }
   // Older GLM/PLR models answer measurement REQUESTS with uint32 LE in
   // 0.05 mm units after a short status header.
   if (bytes.length >= 6 && bytes[0] !== 0xc0) {
-    const dv = new DataView(new Uint8Array(bytes).buffer);
     for (const o of [2, 3]) {
       if (o + 4 > bytes.length) continue;
       const raw = dv.getUint32(o, true);
@@ -115,6 +122,14 @@ const PROFILES = [
   {
     name: 'Bosch GLM/PLR',
     service: '02a6c0d0-0451-4000-b000-fb3210111989',
+    parse: parseBoschFrame,
+  },
+  {
+    // Confirmed on a real UniversalDistance 50C: SIG-registered Robert
+    // Bosch service 0xFDE8 holding vendor characteristic 02a6c0d2
+    // (write-without-response + notify).
+    name: 'Bosch UniversalDistance/AdvancedDistance',
+    service: 0xfde8,
     parse: parseBoschFrame,
   },
   {
@@ -204,17 +219,19 @@ export class LaserLink {
       this.rawLog.push(`services: ${svcList}`);
       this.cb.onRaw?.('');
 
+      const svcUuid = (s) => (typeof s === 'string'
+        ? s
+        : `0000${s.toString(16).padStart(4, '0')}-0000-1000-8000-00805f9b34fb`);
       let hooked = 0;
       let pokeTarget = null;
       let boschChar = null;
       for (const service of found.values()) {
         const uuid = service.uuid;
-        const profile = PROFILES.find((p) =>
-          typeof p.service === 'string' ? p.service === uuid : uuid.startsWith('0000ffe0'));
+        const profile = PROFILES.find((p) => svcUuid(p.service) === uuid);
         let chars = [];
         try { chars = await service.getCharacteristics(); } catch { continue; }
         for (const ch of chars) {
-          if (ch.uuid.startsWith('02a6c0d1')) boschChar = ch;
+          if (ch.uuid.startsWith('02a6c0d1') || ch.uuid.startsWith('02a6c0d2')) boschChar = ch;
           if (ch.properties.write || ch.properties.writeWithoutResponse) {
             if (!pokeTarget) pokeTarget = ch;
           }
@@ -235,13 +252,18 @@ export class LaserLink {
         this.status(`Laser connected (${this.device.name || 'unnamed'}) - take a reading on the device`, 'good');
         // Bosch meters stay silent until auto-sync is enabled on their
         // control characteristic; other meters get a harmless generic
-        // poke (framed protocols drop checksum failures).
+        // poke (framed protocols drop checksum failures). The Bosch char
+        // is write-WITHOUT-response only - the default write mode fails.
+        const writeTo = (ch, bytes) => {
+          const buf = new Uint8Array(bytes);
+          const p = !ch.properties.write && ch.writeValueWithoutResponse
+            ? ch.writeValueWithoutResponse(buf)
+            : ch.writeValue(buf);
+          return p.catch(() => {});
+        };
         setTimeout(() => {
-          if (boschChar) {
-            boschChar.writeValue(new Uint8Array(BOSCH_AUTOSYNC)).catch(() => {});
-          } else if (pokeTarget) {
-            pokeTarget.writeValue(new Uint8Array([0xc0, 0x40, 0x00, 0xee])).catch(() => {});
-          }
+          if (boschChar) writeTo(boschChar, BOSCH_AUTOSYNC);
+          else if (pokeTarget) writeTo(pokeTarget, [0xc0, 0x40, 0x00, 0xee]);
         }, 600);
       } else {
         this.status(`Connected, but no readable channel (services seen: ${svcList}). If the list is empty, pair the meter in the system Bluetooth settings first, then retry.`, 'warn');
