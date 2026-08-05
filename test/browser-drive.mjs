@@ -676,6 +676,7 @@ assert(await js(`document.getElementById('show-work3d').classList.contains('on')
 const angCount = await js(`[...document.querySelectorAll('#overlay3d .lbl.ang')].length`);
 assert(angCount >= 3, `interior angles overlaid in 3D (${angCount})`);
 await click('#show-work3d');
+await settleFrame();
 assert(await js(`[...document.querySelectorAll('#overlay3d .lbl.ang')].length`) === 0, '3D detail toggles off');
 await shot('09-3d');
 await click('#view3d-btn');

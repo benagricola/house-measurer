@@ -89,8 +89,10 @@ export const BOSCH_AUTOSYNC = [0xc0, 0x55, 0x02, 0x01, 0x00, 0x1a];
 export const BOSCH_LASER_ON = [0xc0, 0x41, 0x00, 0x96];
 export const BOSCH_TRIGGER = [0xc0, 0x40, 0x00, 0xee];
 // MT readSettings (0x53, read-only; CRC-8 poly 0xA6 init 0xAA over the
-// whole frame). The reply is a settings container - logged for protocol
-// study, never decoded as a distance.
+// whole frame). Confirmed live on a UniversalDistance 50C: the reply is
+// an EMPTY ok (00 00 82) - this generation has no readable settings
+// container. The reference edge rides in every push frame instead (see
+// handleFrame), so nothing sends this any more; kept for documentation.
 export const BOSCH_READ_SETTINGS = [0xc0, 0x53, 0x00, 0xd8];
 
 // Strict decoder for the UniversalDistance/AdvancedDistance generation:
@@ -300,9 +302,6 @@ export class LaserLink {
           if (boschChar) this._write(boschChar, BOSCH_AUTOSYNC);
           else if (pokeTarget) this._write(pokeTarget, BOSCH_TRIGGER);
         }, 600);
-        // Ask for the settings container once the sync handshake is done;
-        // the reply lands in the frame log for reference-edge research.
-        if (boschChar) setTimeout(() => this._probeSettings(), 1600);
         // Read model/maker first so the connected message can name the
         // device properly (the advertised name is often empty or cryptic).
         this.readDeviceInfo(server).catch(() => {}).then(() => {
@@ -352,16 +351,6 @@ export class LaserLink {
     return this.device?.name || 'laser measure';
   }
 
-  // Read-only settings request. While the reply is pending, the first
-  // non-push frame is labelled and swallowed so a short settings
-  // container can never be mistaken for a distance reply.
-  _probeSettings() {
-    if (!this.boschChar) return;
-    this._expectSettings = true;
-    this._write(this.boschChar, BOSCH_READ_SETTINGS);
-    setTimeout(() => { this._expectSettings = false; }, 2500);
-  }
-
   // Remote, shake-free measurement: arm the laser, then trigger. The
   // reading arrives through the normal notification path; if none does,
   // the meter kept 0.0 and remote measuring is off on this model.
@@ -395,21 +384,31 @@ export class LaserLink {
   }
 
   handleFrame(bytes, profile, tag = '') {
-    // A measure-button push always starts c0 55; anything else that
-    // arrives while a settings probe is pending is its reply.
-    const isPush = bytes[0] === 0xc0 && bytes[1] === 0x55;
-    const isSettings = this._expectSettings && !isPush;
-    const hex = (isSettings ? 'settings: ' : tag ? tag + ': ' : '')
+    const hex = (tag ? tag + ': ' : '')
       + [...bytes].map((b) => b.toString(16).padStart(2, '0')).join(' ');
     this.rawLog.push(hex);
     if (this.rawLog.length > 24) this.rawLog.shift();
     this.cb.onRaw?.(hex);
-    if (isSettings) { this._expectSettings = false; return; }
+    // Push frames broadcast the meter's reference-edge setting in byte 3
+    // (payload byte 0): 0x06 = back edge, 0x04 = front edge - confirmed
+    // by flipping the setting on a real UniversalDistance 50C and
+    // diffing the frames. Byte 5 is a rolling sequence counter.
+    if (bytes[0] === 0xc0 && bytes[1] === 0x55 && bytes[2] === 0x10 && bytes.length >= 11) {
+      const ref = bytes[3] === 0x04 ? 'front' : bytes[3] === 0x06 ? 'back'
+        : `0x${bytes[3].toString(16)}`;
+      if (this.deviceRef && this.deviceRef !== ref) {
+        this.status(`Meter reference edge is now ${ref === 'front' ? 'FRONT' : ref} - remote-shoot correction ${ref === 'front' ? 'off' : 'on'}`, 'warn');
+      }
+      this.deviceRef = ref;
+    }
     let v = profile.parse(bytes);
     if (v == null) return;
-    // Reference-edge correction for remote-trigger replies (00 04 ...).
+    // Remote-trigger replies (00 04 ...) always measure from the front
+    // edge, so they get the body-length correction - except when the
+    // meter itself is set to front edge, because then button readings
+    // are front-edge too and raw remote values already match them.
     if (this.boschChar && bytes[0] === 0x00 && bytes[1] === 0x04) {
-      v += this.remoteOffset || 0;
+      if (this.deviceRef !== 'front') v += this.remoteOffset || 0;
     }
     // Meters often repeat frames; drop identical values arriving in a burst.
     const now = Date.now();

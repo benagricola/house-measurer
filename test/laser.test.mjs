@@ -60,27 +60,35 @@ test('remote-trigger replies get the reference-edge offset; pushes do not', asyn
   close(got[1], 3.425, 1e-6);
 });
 
-test('settings probe reply is swallowed, never decoded as a distance', async () => {
+test('reference edge is read from push frames; front edge disables the remote offset', async () => {
   const { LaserLink } = await import('../js/laser.js');
-  const got = [];
-  const ll = new LaserLink({ onMeasurement: (m) => got.push(m) });
+  const got = [], msgs = [];
+  const ll = new LaserLink({ onMeasurement: (m) => got.push(m), onStatus: (t) => msgs.push(t) });
   ll.boschChar = {};
-  ll._expectSettings = true;
-  // A 4-byte settings container would decode as a plausible distance
-  // under the 00 04 remote-reply branch - it must be labelled and dropped.
+  ll.remoteOffset = 0.1;
+  // Real frames captured from a UniversalDistance 50C while flipping the
+  // reference-edge setting: byte 3 is 0x06 (back edge) / 0x04 (front).
+  const backPush = [0xc0, 0x55, 0x10, 0x06, 0x00, 0x5b, 0x00, 0x23, 0x4a, 0x9b, 0x3e,
+    0, 0, 0, 0, 0, 0, 0, 0, 0x44];
+  const frontPush = [0xc0, 0x55, 0x10, 0x04, 0x00, 0x5c, 0x00, 0x7d, 0x1d, 0x58, 0x3e,
+    0, 0, 0, 0, 0, 0, 0, 0, 0x92];
+  const fval = (b) => new DataView(new Uint8Array(b).buffer).getFloat32(7, true);
+
+  ll.handleFrame(new Uint8Array(backPush), { parse: parseBoschStrict });
+  assert.equal(ll.deviceRef, 'back');
+  close(got[0], fval(backPush), 1e-9);
+  // Remote reply while on back edge: corrected by the offset.
   ll.handleFrame(new Uint8Array([0x00, 0x04, 0x45, 0x0c, 0x00, 0x00, 0x60]), { parse: parseBoschStrict });
-  assert.equal(got.length, 0);
-  assert.ok(ll.rawLog.at(-1).startsWith('settings: 00 04'));
-  assert.equal(ll._expectSettings, false);
-  // A push frame does NOT consume the pending probe...
-  ll._expectSettings = true;
-  ll.handleFrame(new Uint8Array([0xc0, 0x55, 0x10, 0x06, 0, 0, 0, ...f32(2.5), 0x9a]), { parse: parseBoschStrict });
-  close(got[0], 2.5, 1e-6);
-  assert.equal(ll._expectSettings, true);
-  // ...and once the window closes, remote replies decode again.
-  ll._expectSettings = false;
+  close(got[1], 0.15705 + 0.1, 1e-9);
+
+  ll.handleFrame(new Uint8Array(frontPush), { parse: parseBoschStrict });
+  assert.equal(ll.deviceRef, 'front');
+  close(got[2], fval(frontPush), 1e-9);
+  assert.ok(msgs.some((t) => /reference edge/.test(t) && /FRONT/.test(t)), 'change is announced');
+  // Remote reply while on front edge: raw, no correction - button
+  // readings are front-edge too, so they already agree.
   ll.handleFrame(new Uint8Array([0x00, 0x04, 0x45, 0x0c, 0x00, 0x00, 0x60]), { parse: parseBoschStrict });
-  close(got[1], 0.15705 + ll.remoteOffset, 1e-6);
+  close(got[3], 0.15705, 1e-9);
 });
 
 test('Bosch strict: only known frames decode; the auto-sync ACK is ignored', () => {

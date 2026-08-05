@@ -519,6 +519,7 @@ header button.on, #modebar button.on {
 }
 .pill.on { background: var(--teal); color: #fff; }
 .pill.off { background: var(--pill-off-bg); color: var(--pill-off-ink); }
+.pill.warn { background: var(--amber); color: #fff; }
 .log-row input {
   border: 1px solid var(--line);
   border-radius: 7px;

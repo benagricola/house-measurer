@@ -1875,7 +1875,7 @@ const laser = new LaserLink({
     if (/^Laser connected/.test(text)) {
       toast(text, 'good');
       $('laser-sheet').hidden = true;
-    } else if (/^Laser disconnected/.test(text)) {
+    } else if (/^Laser disconnected/.test(text) || /^Meter reference/.test(text)) {
       toast(text, 'warn');
     }
   },
@@ -1897,6 +1897,11 @@ function renderLaser() {
   $('laser-disconnect').hidden = !on;
   const off = $('laser-off');
   if (document.activeElement !== off) off.value = (laser.remoteOffset * 100).toFixed(1);
+  const ref = laser.deviceRef;
+  const refEl = $('laser-ref');
+  refEl.textContent = ref === 'back' ? 'back edge' : ref === 'front' ? 'front edge'
+    : ref ? `other (${ref})` : 'unknown';
+  refEl.className = 'pill ' + (ref === 'back' ? 'on' : ref === 'front' ? 'warn' : 'off');
   $('laser-frames').textContent = laser.rawLog.length ? laser.rawLog.join('\n') : 'none yet';
 }
 

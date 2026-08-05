@@ -110,11 +110,15 @@
       <button id="laser-disconnect" class="danger" hidden>disconnect</button>
     </div>
     <div class="row">
+      <span class="log-name">reference edge (read from the meter)</span>
+      <span id="laser-ref" class="pill off">unknown</span>
+    </div>
+    <div class="row">
       <span class="log-name">remote shoot offset</span>
       <input id="laser-off" type="number" step="0.1" style="width:64px"> cm
       <button id="laser-setlo">set</button>
     </div>
-    <p class="dim" id="laser-hint">Readings land in the active input field. The shoot button (Bosch meters) fires remotely; those readings measure from the device front edge, so the offset above (its body length) is added to match normal back-edge readings.</p>
+    <p class="dim" id="laser-hint">Readings land in the active input field. The shoot button (Bosch meters) fires remotely; those readings measure from the device front edge, so the offset above (its body length) is added to match back-edge readings. The meter broadcasts its reference-edge setting with every reading - if you switch it to front edge, the correction turns off by itself so button and remote readings keep agreeing.</p>
     <div class="row">
       <span class="log-name dim">recent protocol frames</span>
       <button id="laser-copy">copy</button>
