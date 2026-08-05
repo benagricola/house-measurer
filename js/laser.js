@@ -96,13 +96,16 @@ export const BOSCH_TRIGGER = [0xc0, 0x40, 0x00, 0xee];
 // the heuristics.
 export function parseBoschStrict(bytes) {
   const dv = new DataView(new Uint8Array(bytes).buffer);
+  // Push indication after auto-sync (measure button): float32 LE metres.
   if (bytes.length >= 11 && bytes[0] === 0xc0 && bytes[1] === 0x55 && bytes[2] === 0x10) {
     const v = dv.getFloat32(7, true);
     if (isFinite(v) && v >= PLAUSIBLE_MIN && v <= PLAUSIBLE_MAX) return v;
   }
+  // Reply to a remote trigger: uint32 LE in 0.05 mm ticks (confirmed live
+  // against a UniversalDistance 50C; matches the GLM reference decoder).
   if (bytes.length >= 7 && bytes[0] === 0x00 && bytes[1] === 0x04) {
-    const v = dv.getFloat32(2, true);
-    if (isFinite(v) && v >= PLAUSIBLE_MIN && v <= PLAUSIBLE_MAX) return v;
+    const v = dv.getUint32(2, true) * 0.05 / 1000;
+    if (v >= PLAUSIBLE_MIN && v <= PLAUSIBLE_MAX) return v;
   }
   return null;
 }
@@ -113,12 +116,11 @@ export function parseBoschFrame(bytes) {
     const v = dv.getFloat32(7, true);
     if (isFinite(v) && v >= PLAUSIBLE_MIN && v <= PLAUSIBLE_MAX) return v;
   }
-  // Short reply frame, observed live on a UniversalDistance 50C:
-  // [status 0x00, len 0x04, float32 LE metres, crc]. A payload of 0.0
-  // means "no measurement" and must not type a zero into the field.
+  // Short reply frame [status 0x00, len 0x04, uint32 LE 0.05 mm, crc] -
+  // confirmed live; zero payload means "no measurement".
   if (bytes.length >= 7 && bytes[0] === 0x00 && bytes[1] === 0x04) {
-    const v = dv.getFloat32(2, true);
-    if (isFinite(v) && v >= PLAUSIBLE_MIN && v <= PLAUSIBLE_MAX) return v;
+    const v = dv.getUint32(2, true) * 0.05 / 1000;
+    if (v >= PLAUSIBLE_MIN && v <= PLAUSIBLE_MAX) return v;
     if (v === 0) return null;
   }
   // Older GLM/PLR models answer measurement REQUESTS with uint32 LE in
@@ -250,6 +252,7 @@ export class LaserLink {
       let hooked = 0;
       let pokeTarget = null;
       let boschChar = null;
+      this.profileName = null;
       for (const service of found.values()) {
         const uuid = service.uuid;
         const profile = PROFILES.find((p) => svcUuid(p.service) === uuid);
@@ -269,16 +272,26 @@ export class LaserLink {
               this.handleFrame(new Uint8Array(e.target.value.buffer), { parse }, tag);
             });
             hooked++;
+            if (profile && !this.profileName) this.profileName = profile.name;
           } catch {}
         }
       }
       this.connected = hooked > 0;
       if (hooked) {
-        this.status(`Laser connected (${this.device.name || 'unnamed'}) - take a reading on the device`, 'good');
+        // Say WHICH protocol matched - the advertised name (e.g. "UD 50C
+        // x6225") never says "Bosch", and recognition keys on the control
+        // characteristic, not the name.
+        this.boschChar = boschChar;
+        this.rawLog.push(`protocol: ${this.profileName ?? 'generic'}${boschChar ? `, control ${boschChar.uuid.slice(0, 8)}` : ''}`);
+        const proto = boschChar
+          ? `${this.profileName ?? 'Bosch'} protocol, shoot available`
+          : this.profileName
+            ? `${this.profileName} protocol`
+            : 'generic mode - frames will be logged';
+        this.status(`Laser connected (${this.device.name || 'unnamed'}) - ${proto}`, 'good');
         // Bosch meters stay silent until auto-sync is enabled on their
         // control characteristic; other meters get a harmless generic
         // poke (framed protocols drop checksum failures).
-        this.boschChar = boschChar;
         setTimeout(() => {
           if (boschChar) this._write(boschChar, BOSCH_AUTOSYNC);
           else if (pokeTarget) this._write(pokeTarget, BOSCH_TRIGGER);

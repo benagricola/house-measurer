@@ -54,7 +54,10 @@ test('Bosch strict: only known frames decode; the auto-sync ACK is ignored', () 
   assert.equal(parseBoschStrict(ack), null);
   assert.notEqual(parseBoschFrame(ack), null, 'legacy parser would have surfaced it');
   close(parseBoschStrict([0xc0, 0x55, 0x10, 0x06, 0, 0, 0, ...f32(3.425), 0x9a]), 3.425);
-  close(parseBoschStrict([0x00, 0x04, ...f32(2.618), 0x5c]), 2.618);
+  // Real remote-trigger reply captured live: 0x0C45 = 3141 ticks of
+  // 0.05 mm = 0.15705 m.
+  close(parseBoschStrict([0x00, 0x04, 0x45, 0x0c, 0x00, 0x00, 0x60]), 0.15705);
+  assert.equal(parseBoschStrict([0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x5c]), null, 'zero = no measurement');
   assert.equal(parseBoschStrict(ascii('2.345')), null, 'no heuristic fallback');
 });
 
@@ -64,9 +67,8 @@ test('Bosch frames: 50-27/UniversalDistance indication and legacy MT reply', () 
   close(parseBoschFrame(frame), 3.4257);
   // Non-mm float values must survive (no resolution gate on exact frames).
   close(parseBoschFrame([0xc0, 0x55, 0x10, 0x06, 0, 0, 0, ...f32(1.2345678), 0]), 1.2345678, 1e-6);
-  // Short reply frame as captured live from a UniversalDistance 50C:
-  // status 0x00, len 0x04, float32 LE metres, crc.
-  close(parseBoschFrame([0x00, 0x04, ...f32(2.618), 0x5c]), 2.618);
+  // Short reply frame: uint32 LE in 0.05 mm ticks (2.618 m = 52360).
+  close(parseBoschFrame([0x00, 0x04, 0x88, 0xcc, 0x00, 0x00, 0x5c]), 2.618);
   // Its 0.0 payload means "no measurement" - must not produce a value.
   assert.equal(parseBoschFrame([0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x5c]), null);
   // Legacy reply: uint32 LE in 0.05 mm units after a 2-byte header.
