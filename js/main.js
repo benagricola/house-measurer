@@ -1834,8 +1834,9 @@ const buzz = (p) => {
 
 const laser = new LaserLink({
 
-  onMeasurement: (m) => {
+  onMeasurement: (m, meta = {}) => {
     buzz(25);
+    if (ui.laserCal) return laserCalStep(m, meta);
     const txt = m.toFixed(3).replace(/0+$/, '').replace(/\.$/, '.0');
     ui.fields[ui.active] = txt;
     const auto = ui.autoLaser === true;
@@ -1902,6 +1903,14 @@ function renderLaser() {
   refEl.textContent = ref === 'back' ? 'back edge' : ref === 'front' ? 'front edge'
     : ref ? `other (${ref})` : 'unknown';
   refEl.className = 'pill ' + (ref === 'back' ? 'on' : ref === 'front' ? 'warn' : 'off');
+  $('laser-cal').textContent = ui.laserCal ? 'cancel' : 'calibrate';
+  const calMsg = $('laser-cal-msg');
+  calMsg.hidden = !ui.laserCal;
+  if (ui.laserCal) {
+    calMsg.textContent = ui.laserCal.stage === 'button'
+      ? 'Prop the meter dead still against something solid, aim at a flat target, then press the meter\'s own measure button once.'
+      : 'Hold still - firing the remote shot...';
+  }
   $('laser-frames').textContent = laser.rawLog.length ? laser.rawLog.join('\n') : 'none yet';
 }
 
@@ -1933,6 +1942,58 @@ $('laser-copy').addEventListener('click', async () => {
   } catch {
     toast('Clipboard blocked - long-press the frame text to select it', 'warn');
   }
+});
+
+// Offset self-calibration: the meter's stored body length is not in any
+// readable register, but the meter APPLIES it to every back-edge button
+// reading. So: one compensated button reading minus one raw remote shot,
+// meter propped still in between = the constant the meter itself uses.
+function laserCalStep(m, meta) {
+  const cal = ui.laserCal;
+  if (cal.stage === 'button' && meta.kind === 'push') {
+    cal.stage = 'remote';
+    cal.push = m;
+    toast('Got the button reading - hold still...', 'good');
+    renderLaser();
+    laser.remoteTrigger();
+    cal.timer = setTimeout(() => {
+      if (ui.laserCal === cal) {
+        ui.laserCal = null;
+        toast('No remote reading came back - calibration cancelled', 'warn');
+        renderLaser();
+      }
+    }, 4000);
+    return;
+  }
+  if (cal.stage === 'remote' && meta.kind === 'remote') {
+    clearTimeout(cal.timer);
+    ui.laserCal = null;
+    const body = cal.push - meta.raw;
+    if (body > 0.02 && body < 0.35) {
+      laser.remoteOffset = Math.round(body * 10000) / 10000;
+      try { localStorage.setItem('house-measurer.laserOffset', String(laser.remoteOffset)); } catch {}
+      toast(`Calibrated: body length ${(body * 1000).toFixed(1)} mm, read from the meter's own compensation`, 'good');
+    } else {
+      toast(`Difference came out at ${(body * 1000).toFixed(0)} mm - implausible (meter moved?). Offset unchanged.`, 'err');
+    }
+    renderLaser();
+  }
+  // Anything else (a stray frame) is ignored until the expected one lands.
+}
+
+$('laser-cal').addEventListener('click', () => {
+  if (ui.laserCal) {
+    clearTimeout(ui.laserCal.timer);
+    ui.laserCal = null;
+    renderLaser();
+    return;
+  }
+  if (!laser.canTrigger) return toast('Calibration needs a connected Bosch meter', 'warn');
+  if (laser.deviceRef === 'front') {
+    return toast('Set the meter to back-edge reference first - on front edge there is nothing to compensate', 'warn');
+  }
+  ui.laserCal = { stage: 'button' };
+  renderLaser();
 });
 try {
   const lo = parseFloat(localStorage.getItem('house-measurer.laserOffset'));

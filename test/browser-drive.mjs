@@ -867,6 +867,27 @@ assert(Math.abs(await js(`window.app.laser.remoteOffset`) - 0.095) < 1e-9, 'offs
 assert(await js(`[...document.querySelectorAll('#toasts .toast')].some(t => /9.5 cm/.test(t.textContent))`), 'offset change raises a toast');
 await js(`document.getElementById('laser-off').value = '10'`);
 await click('#laser-setlo');
+
+// Calibration: guarded without a meter, and the full flow with a stub.
+await click('#laser-cal');
+assert(await js(`[...document.querySelectorAll('#toasts .toast')].some(t => /needs a connected/i.test(t.textContent))`), 'calibrate without a meter explains itself');
+await js(`(() => {
+  const l = window.app.laser;
+  l.connected = true;
+  l.deviceRef = 'back';
+  l.boschChar = { properties: { write: false, writeWithoutResponse: true }, writeValueWithoutResponse: async () => {} };
+})()`);
+await click('#laser-cal');
+assert(await js(`window.app.ui.laserCal?.stage`) === 'button', 'calibration waits for the button press');
+assert(await js(`!document.getElementById('laser-cal-msg').hidden`), 'calibration instructions shown');
+await js(`window.app.laser.cb.onMeasurement(2.527, { kind: 'push', raw: 2.527 })`);
+assert(await js(`window.app.ui.laserCal?.stage`) === 'remote', 'button reading captured, remote shot fired');
+await js(`window.app.laser.cb.onMeasurement(2.527, { kind: 'remote', raw: 2.427 })`);
+assert(await js(`window.app.ui.laserCal`) === null, 'calibration completes');
+assert(Math.abs(await js(`window.app.laser.remoteOffset`) - 0.1) < 1e-9, 'body length derived from push-minus-raw (100 mm)');
+assert(await js(`[...document.querySelectorAll('#toasts .toast')].some(t => /Calibrated: body length 100.0 mm/.test(t.textContent))`), 'calibration announces the measured body length');
+await js(`(() => { const l = window.app.laser; l.connected = false; l.boschChar = null; l.deviceRef = null; window.app.render(); })()`);
+
 await click('#laser-close');
 assert(await js(`document.getElementById('laser-sheet').hidden`), 'laser panel closes');
 

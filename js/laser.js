@@ -389,11 +389,13 @@ export class LaserLink {
     this.rawLog.push(hex);
     if (this.rawLog.length > 24) this.rawLog.shift();
     this.cb.onRaw?.(hex);
+    const isPush = bytes[0] === 0xc0 && bytes[1] === 0x55 && bytes[2] === 0x10 && bytes.length >= 11;
+    const isRemote = bytes[0] === 0x00 && bytes[1] === 0x04;
     // Push frames broadcast the meter's reference-edge setting in byte 3
     // (payload byte 0): 0x06 = back edge, 0x04 = front edge - confirmed
     // by flipping the setting on a real UniversalDistance 50C and
     // diffing the frames. Byte 5 is a rolling sequence counter.
-    if (bytes[0] === 0xc0 && bytes[1] === 0x55 && bytes[2] === 0x10 && bytes.length >= 11) {
+    if (isPush) {
       const ref = bytes[3] === 0x04 ? 'front' : bytes[3] === 0x06 ? 'back'
         : `0x${bytes[3].toString(16)}`;
       if (this.deviceRef && this.deviceRef !== ref) {
@@ -403,18 +405,22 @@ export class LaserLink {
     }
     let v = profile.parse(bytes);
     if (v == null) return;
+    const raw = v;
     // Remote-trigger replies (00 04 ...) always measure from the front
     // edge, so they get the body-length correction - except when the
     // meter itself is set to front edge, because then button readings
     // are front-edge too and raw remote values already match them.
-    if (this.boschChar && bytes[0] === 0x00 && bytes[1] === 0x04) {
-      if (this.deviceRef !== 'front') v += this.remoteOffset || 0;
+    if (this.boschChar && isRemote && this.deviceRef !== 'front') {
+      v += this.remoteOffset || 0;
     }
     // Meters often repeat frames; drop identical values arriving in a burst.
     const now = Date.now();
     if (this._lastValue === v && now - this._lastAt < 800) return;
     this._lastValue = v;
     this._lastAt = now;
-    this.cb.onMeasurement?.(v);
+    // The frame kind and pre-correction value ride along so the app can
+    // treat button pushes and remote replies differently (calibration
+    // derives the body length from exactly that difference).
+    this.cb.onMeasurement?.(v, { kind: isPush ? 'push' : isRemote ? 'remote' : 'other', raw });
   }
 }

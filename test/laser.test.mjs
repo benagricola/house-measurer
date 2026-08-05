@@ -62,8 +62,11 @@ test('remote-trigger replies get the reference-edge offset; pushes do not', asyn
 
 test('reference edge is read from push frames; front edge disables the remote offset', async () => {
   const { LaserLink } = await import('../js/laser.js');
-  const got = [], msgs = [];
-  const ll = new LaserLink({ onMeasurement: (m) => got.push(m), onStatus: (t) => msgs.push(t) });
+  const got = [], metas = [], msgs = [];
+  const ll = new LaserLink({
+    onMeasurement: (m, meta) => { got.push(m); metas.push(meta); },
+    onStatus: (t) => msgs.push(t),
+  });
   ll.boschChar = {};
   ll.remoteOffset = 0.1;
   // Real frames captured from a UniversalDistance 50C while flipping the
@@ -89,6 +92,13 @@ test('reference edge is read from push frames; front edge disables the remote of
   // readings are front-edge too, so they already agree.
   ll.handleFrame(new Uint8Array([0x00, 0x04, 0x45, 0x0c, 0x00, 0x00, 0x60]), { parse: parseBoschStrict });
   close(got[3], 0.15705, 1e-9);
+
+  // Frame kind + pre-correction value ride along for the calibration
+  // flow: the corrected remote value still exposes its raw reading.
+  assert.equal(metas[0].kind, 'push');
+  assert.equal(metas[1].kind, 'remote');
+  close(metas[1].raw, 0.15705, 1e-9); // while got[1] carried the +0.1
+  close(metas[0].raw, got[0], 1e-12); // pushes are never corrected
 });
 
 test('Bosch strict: only known frames decode; the auto-sync ACK is ignored', () => {

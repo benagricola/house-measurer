@@ -117,7 +117,9 @@
       <span class="log-name">remote shoot offset</span>
       <input id="laser-off" type="number" step="0.1" style="width:64px"> cm
       <button id="laser-setlo">set</button>
+      <button id="laser-cal" title="derive the offset from the meter itself: one button press, one remote shot">calibrate</button>
     </div>
+    <p class="dim" id="laser-cal-msg" hidden></p>
     <p class="dim" id="laser-hint">Readings land in the active input field. The shoot button (Bosch meters) fires remotely; those readings measure from the device front edge, so the offset above (its body length) is added to match back-edge readings. The meter broadcasts its reference-edge setting with every reading - if you switch it to front edge, the correction turns off by itself so button and remote readings keep agreeing.</p>
     <div class="row">
       <span class="log-name dim">recent protocol frames</span>
@@ -175,7 +177,7 @@
     <h2>bluetooth laser</h2>
     <p>Tap <b>laser</b> in the header to open the laser panel, then <b>connect</b> (Chrome, and the app must be on its https:// address or localhost). Each reading lands in the active field ready for OK. The panel also holds the remote-shoot offset and a log of recent protocol frames (copyable) so unknown meters can be given a decoder.</p>
     <p><b>Auto mode</b> (the <b>auto</b> toggle next to the reference slots, off by default): each laser reading advances the survey by itself. The number of selected references is the contract: with 2 selected, every pair of readings places a point; with 3 or 4 selected, every point takes that many readings and commits on the last one - then the next point begins automatically against the same references. The status line always names which reference to shoot next, and the phone buzzes: short tick = reading logged, triple = point placed, long = reading refused. A mis-fired shot is retracted with <b>del</b> (steps back one reading); Escape restarts the current fix. Every guard still applies: impossible pairs are refused with an explanation, flip swaps a wrong side, and undo unwinds anything.</p>
-    <p>The <b>shoot</b> button (Bosch meters) triggers a measurement remotely - the laser arms, then fires, with no button press to shake the aim. Remote readings measure from the device's FRONT edge, so a corrective offset (the body length, default 10 cm, adjustable in the laser panel) is added to match your usual back-edge readings. The device screen stays at 0 for remote shots - compare values in the app field instead. If the meter declines, the status says so.</p>
+    <p>The <b>shoot</b> button (Bosch meters) triggers a measurement remotely - the laser arms, then fires, with no button press to shake the aim. Remote readings measure from the device's FRONT edge, so a corrective offset (the body length, default 10 cm, adjustable in the laser panel) is added to match your usual back-edge readings. The device screen stays at 0 for remote shots - compare values in the app field instead. If the meter declines, the status says so. The <b>calibrate</b> button in the laser panel derives the offset from the meter itself: prop it still, press its measure button once, and the app fires a remote shot and reads the body length off the difference.</p>
     <p class="fine">Everything is saved on this device automatically. Export JSON from the log sheet for backup or to move devices.</p>
     <button id="clear-all">clear everything</button>
   </div>
