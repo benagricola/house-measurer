@@ -1712,8 +1712,14 @@ function toggle3D() {
 // Bluetooth laser: a decoded reading fills the active field exactly as if
 // typed (metres with a decimal point), so you check it and press OK.
 // Haptic cadence for heads-up surveying: short tick = reading logged,
-// triple = point committed, long = refused. No-op without a vibrator.
-const buzz = (p) => { try { navigator.vibrate?.(p); } catch {} };
+// triple = point committed, long = refused. No-op without a vibrator,
+// and skipped before the first user interaction (the browser would
+// block it and log an intervention error).
+const buzz = (p) => {
+  try {
+    if (navigator.userActivation?.hasBeenActive) navigator.vibrate?.(p);
+  } catch {}
+};
 
 const laser = new LaserLink({
   onMeasurement: (m) => {
