@@ -55,6 +55,7 @@
         <button id="unwall-btn" style="display:none" title="take this point out of the wall outline (it stays as a reference)">unwall</button>
         <button id="pause-btn" style="display:none" title="pause wall auto-chaining to place reference-only points"></button>
         <button id="auto-btn" style="display:none" title="laser auto mode: readings advance and commit points by themselves"></button>
+        <button id="shoot-btn" style="display:none" title="trigger a shake-free measurement from here (arms the laser, then fires)">shoot</button>
       </div>
       <div id="fields">
         <div class="field" id="field0"><label></label><div class="val"></div><div class="interp"></div></div>
@@ -142,6 +143,7 @@
     <h2>bluetooth laser</h2>
     <p>Tap <b>laser</b> in the header (Chrome, and the app must be on its https:// address or localhost), pick the device, and each reading lands in the active field ready for OK. Unknown meters get their raw frames logged in the data sheet so a decoder can be added.</p>
     <p><b>Auto mode</b> (the <b>auto</b> toggle next to the reference slots, off by default): each laser reading advances the survey by itself. The number of selected references is the contract: with 2 selected, every pair of readings places a point; with 3 or 4 selected, every point takes that many readings and commits on the last one - then the next point begins automatically against the same references. The status line always names which reference to shoot next, and the phone buzzes: short tick = reading logged, triple = point placed, long = reading refused. A mis-fired shot is retracted with <b>del</b> (steps back one reading); Escape restarts the current fix. Every guard still applies: impossible pairs are refused with an explanation, flip swaps a wrong side, and undo unwinds anything.</p>
+    <p>The <b>shoot</b> button (Bosch meters) triggers a measurement remotely - the laser arms, then fires, with no button press to shake the aim. If the meter declines (some models only measure from their own button), the status says so.</p>
     <p class="fine">Everything is saved on this device automatically. Export JSON from the log sheet for backup or to move devices.</p>
     <button id="clear-all">clear everything</button>
   </div>

@@ -369,6 +369,14 @@ header button.on, #modebar button.on {
 #del-point { padding: 5px 12px; font-size: 13px; color: var(--red); border-color: var(--red); }
 #unwall-btn { padding: 5px 12px; font-size: 13px; color: var(--ink); }
 #pause-btn, #auto-btn { padding: 5px 12px; font-size: 13px; color: var(--muted); }
+#shoot-btn {
+  padding: 5px 14px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #fff;
+  background: var(--teal);
+  border-color: var(--teal);
+}
 #pause-btn.on, #auto-btn.on { color: var(--teal); border-color: var(--teal); font-weight: 700; }
 #floor-btn {
   flex: 0 0 auto !important;

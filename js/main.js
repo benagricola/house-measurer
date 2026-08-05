@@ -1009,8 +1009,11 @@ function renderLog() {
   });
 
   section('laser');
+  const linfo = laser.info && Object.values(laser.info).filter(Boolean).length
+    ? ` <span class="dim">(${[laser.info.maker, laser.info.model, laser.info.firmware && 'fw ' + laser.info.firmware].filter(Boolean).join(', ')})</span>`
+    : '';
   addRow(laser.connected
-    ? `<span class="pill on">connected</span><span class="log-name">${laser.device?.name || 'laser measure'}</span>`
+    ? `<span class="pill on">connected</span><span class="log-name">${laser.device?.name || 'laser measure'}${linfo}</span>`
     : `<span class="pill off">off</span><span class="log-name dim">${laser.secureContextProblem || 'connect with the laser button in the header'}</span>`);
   if (laser.rawLog.length) {
     addRow(`<span class="log-name dim">recent frames (for protocol decoding):</span>`);
@@ -1163,6 +1166,7 @@ function renderPanel() {
     $('auto-btn').style.display = laser.connected && ui.mode === 'measure' && !ui.flow ? '' : 'none';
     $('auto-btn').textContent = `auto: ${ui.autoLaser === true ? 'on' : 'off'}`;
     $('auto-btn').classList.toggle('on', ui.autoLaser === true);
+    $('shoot-btn').style.display = laser.canTrigger ? '' : 'none';
   }
   // "close room" appears while a wall run with 3+ points is waiting.
   const open = store.openWall();
@@ -1822,6 +1826,7 @@ $('pause-btn').addEventListener('click', () => {
     ? 'Walling paused: new points are reference-only until you resume'
     : 'Walling resumed: new points chain into the outline again');
 });
+$('shoot-btn').addEventListener('click', () => laser.remoteTrigger());
 $('auto-btn').addEventListener('click', () => {
   ui.autoLaser = ui.autoLaser !== true;
   say(ui.autoLaser

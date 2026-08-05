@@ -83,6 +83,11 @@ export function parseDistoFrame(bytes) {
 // the 50-27CG). No mm-resolution gate here: the header identifies the
 // frame, and Bosch's floats are not necessarily whole millimetres.
 export const BOSCH_AUTOSYNC = [0xc0, 0x55, 0x02, 0x01, 0x00, 0x1a];
+// Classic GLM frame commands ([start][command][length][checksum]) - the
+// UniversalDistance replies to these with status 0x00, so they are
+// understood; remote measurement needs the laser armed first.
+export const BOSCH_LASER_ON = [0xc0, 0x41, 0x00, 0x96];
+export const BOSCH_TRIGGER = [0xc0, 0x40, 0x00, 0xee];
 
 // Strict decoder for the UniversalDistance/AdvancedDistance generation:
 // ONLY the two known measurement frame shapes decode; every other frame
@@ -206,6 +211,7 @@ export class LaserLink {
       ...PROFILES.map((p) => p.service),
       0xfff0, 0xffe5, 0xffb0,
       '49535343-fe7d-4ae5-8fa9-9fafd205e455', // Microchip Transparent UART
+      0x180a, // Device Information
     ];
     try {
       this.status('Choose your laser measure in the picker...');
@@ -271,19 +277,13 @@ export class LaserLink {
         this.status(`Laser connected (${this.device.name || 'unnamed'}) - take a reading on the device`, 'good');
         // Bosch meters stay silent until auto-sync is enabled on their
         // control characteristic; other meters get a harmless generic
-        // poke (framed protocols drop checksum failures). The Bosch char
-        // is write-WITHOUT-response only - the default write mode fails.
-        const writeTo = (ch, bytes) => {
-          const buf = new Uint8Array(bytes);
-          const p = !ch.properties.write && ch.writeValueWithoutResponse
-            ? ch.writeValueWithoutResponse(buf)
-            : ch.writeValue(buf);
-          return p.catch(() => {});
-        };
+        // poke (framed protocols drop checksum failures).
+        this.boschChar = boschChar;
         setTimeout(() => {
-          if (boschChar) writeTo(boschChar, BOSCH_AUTOSYNC);
-          else if (pokeTarget) writeTo(pokeTarget, [0xc0, 0x40, 0x00, 0xee]);
+          if (boschChar) this._write(boschChar, BOSCH_AUTOSYNC);
+          else if (pokeTarget) this._write(pokeTarget, BOSCH_TRIGGER);
         }, 600);
+        this.readDeviceInfo(server).catch(() => {});
       } else {
         this.status(`Connected, but no readable channel (services seen: ${svcList}). If the list is empty, pair the meter in the system Bluetooth settings first, then retry.`, 'warn');
       }
@@ -301,7 +301,52 @@ export class LaserLink {
   disconnect() {
     try { this.device?.gatt?.disconnect(); } catch {}
     this.connected = false;
+    this.boschChar = null;
     this.status('Laser disconnected');
+  }
+
+  // The Bosch char is write-WITHOUT-response only - the default write
+  // mode fails on it.
+  _write(ch, bytes) {
+    const buf = new Uint8Array(bytes);
+    const p = !ch.properties.write && ch.writeValueWithoutResponse
+      ? ch.writeValueWithoutResponse(buf)
+      : ch.writeValue(buf);
+    return p.catch(() => {});
+  }
+
+  get canTrigger() { return this.connected && !!this.boschChar; }
+
+  // Remote, shake-free measurement: arm the laser, then trigger. The
+  // reading arrives through the normal notification path; if none does,
+  // the meter kept 0.0 and remote measuring is off on this model.
+  async remoteTrigger() {
+    if (!this.canTrigger) return this.status('Remote trigger needs a connected Bosch meter', 'warn');
+    const before = this._lastAt;
+    this.status('Arming laser...');
+    await this._write(this.boschChar, BOSCH_LASER_ON);
+    await new Promise((r) => setTimeout(r, 450));
+    await this._write(this.boschChar, BOSCH_TRIGGER);
+    setTimeout(() => {
+      if (this._lastAt === before) {
+        this.status('No remote reading returned - this model may only measure from its own button', 'warn');
+      }
+    }, 2500);
+  }
+
+  async readDeviceInfo(server) {
+    const info = {};
+    const fields = [[0x2a24, 'model'], [0x2a25, 'serial'], [0x2a26, 'firmware'], [0x2a29, 'maker']];
+    try {
+      const svc = await server.getPrimaryService(0x180a);
+      for (const [uuid, key] of fields) {
+        try {
+          const v = await (await svc.getCharacteristic(uuid)).readValue();
+          info[key] = new TextDecoder().decode(v).replace(/\0+$/, '').trim();
+        } catch {}
+      }
+    } catch {}
+    this.info = info;
   }
 
   handleFrame(bytes, profile, tag = '') {
