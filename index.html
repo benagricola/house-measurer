@@ -13,14 +13,13 @@
 
 <div id="app">
   <header>
-    <button id="undo" title="undo (ctrl+z)">undo</button>
-    <button id="redo" title="redo (ctrl+y)">redo</button>
     <div id="title">house measurer</div>
     <div id="gap-pill" hidden></div>
-    <button id="laser-btn" title="connect a Bluetooth laser measure (needs HTTPS)">laser</button>
+    <button id="laser-btn" title="Bluetooth laser measure: connection, remote shoot, settings">laser</button>
     <button id="view3d-btn" title="toggle 3D view">3D</button>
     <button id="log-btn" title="measurements, walls, rooms, layers, export/import">data</button>
     <button id="fit" title="fit everything in view">fit</button>
+    <button id="theme-btn" title="switch between light and dark mode">dark</button>
     <button id="help" title="help">?</button>
   </header>
 
@@ -34,6 +33,7 @@
     <div id="view3d-wrap" hidden>
       <canvas id="plan3d"></canvas>
       <div id="overlay3d"></div>
+      <button id="show-work3d" title="show wall angles and fix quality on the survey pins">detail</button>
     </div>
 
     <section id="panel">
@@ -45,6 +45,8 @@
         <button data-mode="wall">walls</button>
         <button data-mode="item">items</button>
         <button data-mode="move">move</button>
+        <button id="undo" class="mini" title="undo (ctrl+z)">undo</button>
+        <button id="redo" class="mini" title="redo (ctrl+y)">redo</button>
       </div>
       <div id="refbar">
         <span>from</span>
@@ -95,6 +97,32 @@
   </div>
 </div>
 
+<div id="laser-sheet" hidden>
+  <div id="laser-card">
+    <button id="laser-close">x</button>
+    <h2>laser</h2>
+    <div class="row">
+      <span id="laser-pill" class="pill off">off</span>
+      <span id="laser-name" class="log-name dim">not connected</span>
+    </div>
+    <div class="row">
+      <button id="laser-connect">connect</button>
+      <button id="laser-disconnect" class="danger" hidden>disconnect</button>
+    </div>
+    <div class="row">
+      <span class="log-name">remote shoot offset</span>
+      <input id="laser-off" type="number" step="0.1" style="width:64px"> cm
+      <button id="laser-setlo">set</button>
+    </div>
+    <p class="dim" id="laser-hint">Readings land in the active input field. The shoot button (Bosch meters) fires remotely; those readings measure from the device front edge, so the offset above (its body length) is added to match normal back-edge readings.</p>
+    <div class="row">
+      <span class="log-name dim">recent protocol frames</span>
+      <button id="laser-copy">copy</button>
+    </div>
+    <pre id="laser-frames">none yet</pre>
+  </div>
+</div>
+
 <div id="item-form" hidden>
   <div id="item-card">
     <button id="if-close">x</button>
@@ -141,13 +169,15 @@
     <h2>keys</h2>
     <p>Drag to pan, pinch or scroll to zoom, double-tap empty plan to zoom in one-handed. Keyboard: digits, Enter = OK, Tab = other field, f = flip, Escape = cancel, ctrl+z undo.</p>
     <h2>bluetooth laser</h2>
-    <p>Tap <b>laser</b> in the header (Chrome, and the app must be on its https:// address or localhost), pick the device, and each reading lands in the active field ready for OK. Unknown meters get their raw frames logged in the data sheet so a decoder can be added.</p>
+    <p>Tap <b>laser</b> in the header to open the laser panel, then <b>connect</b> (Chrome, and the app must be on its https:// address or localhost). Each reading lands in the active field ready for OK. The panel also holds the remote-shoot offset and a log of recent protocol frames (copyable) so unknown meters can be given a decoder.</p>
     <p><b>Auto mode</b> (the <b>auto</b> toggle next to the reference slots, off by default): each laser reading advances the survey by itself. The number of selected references is the contract: with 2 selected, every pair of readings places a point; with 3 or 4 selected, every point takes that many readings and commits on the last one - then the next point begins automatically against the same references. The status line always names which reference to shoot next, and the phone buzzes: short tick = reading logged, triple = point placed, long = reading refused. A mis-fired shot is retracted with <b>del</b> (steps back one reading); Escape restarts the current fix. Every guard still applies: impossible pairs are refused with an explanation, flip swaps a wrong side, and undo unwinds anything.</p>
-    <p>The <b>shoot</b> button (Bosch meters) triggers a measurement remotely - the laser arms, then fires, with no button press to shake the aim. Remote readings measure from the device's FRONT edge, so a corrective offset (the body length, default 10 cm, adjustable in the data sheet) is added to match your usual back-edge readings. The device screen stays at 0 for remote shots - compare values in the app field instead. If the meter declines, the status says so.</p>
+    <p>The <b>shoot</b> button (Bosch meters) triggers a measurement remotely - the laser arms, then fires, with no button press to shake the aim. Remote readings measure from the device's FRONT edge, so a corrective offset (the body length, default 10 cm, adjustable in the laser panel) is added to match your usual back-edge readings. The device screen stays at 0 for remote shots - compare values in the app field instead. If the meter declines, the status says so.</p>
     <p class="fine">Everything is saved on this device automatically. Export JSON from the log sheet for backup or to move devices.</p>
     <button id="clear-all">clear everything</button>
   </div>
 </div>
+
+<div id="toasts"></div>
 
 <script type="module" src="js/main.js"></script>
 </body>

@@ -350,9 +350,18 @@ await click('#log-btn');
 await shot('06-data');
 const logText = await js(`document.getElementById('log-list').innerText`);
 assert(logText.includes('A to D'), 'data sheet lists the check measurement');
-assert(/laser/i.test(logText), 'data sheet has the laser section');
+assert(!/laser/i.test(logText), 'laser section moved out of the data sheet');
+assert(/between/i.test(logText) && /measured/i.test(logText) && /error/i.test(logText), 'measurements table has column headings');
 assert(await js(`!!document.getElementById('laser-btn')`), 'laser button present in header');
 assert(await js(`document.getElementById('shoot-btn').style.display`) === 'none', 'shoot hidden without a triggerable meter');
+// The data card is centred, not a bottom sheet running off-screen.
+{
+  const card = await js(`(() => {
+    const r = document.getElementById('log-card').getBoundingClientRect();
+    return { top: r.top, bottom: r.bottom, ih: window.innerHeight };
+  })()`);
+  assert(card.top > 0 && card.bottom < card.ih, `data card fully on screen (${Math.round(card.top)}..${Math.round(card.bottom)} of ${card.ih})`);
+}
 assert(/ceiling 250 cm/.test(logText), 'data sheet shows the room ceiling');
 assert(/cm/.test(logText), 'data sheet shows residuals');
 
@@ -659,6 +668,15 @@ assert(await js('window.app.ui.flow?.kind') === 'wall-edit', '3D wall-face tap o
 await key('ok');
 await key('ok'); // empty: unchanged
 assert(await js('window.app.ui.flow') === null, '3D wall edit closes cleanly');
+
+// Detail mode works inside 3D: corner angles + fix diagnostics as labels.
+await click('#show-work3d');
+await settleFrame();
+assert(await js(`document.getElementById('show-work3d').classList.contains('on')`), '3D detail button lights up');
+const angCount = await js(`[...document.querySelectorAll('#overlay3d .lbl.ang')].length`);
+assert(angCount >= 3, `interior angles overlaid in 3D (${angCount})`);
+await click('#show-work3d');
+assert(await js(`[...document.querySelectorAll('#overlay3d .lbl.ang')].length`) === 0, '3D detail toggles off');
 await shot('09-3d');
 await click('#view3d-btn');
 assert(await js('window.app.ui.view') === 'plan', 'back to plan');
@@ -812,6 +830,47 @@ const stairKids = await js(`(() => {
 assert(stairKids >= 14, `3D: staircase rendered as steps (${stairKids})`);
 await shot('13-two-floors');
 await click('#view3d-btn');
+
+// Theme toggle: boots with the OS preference (either way), and the button
+// flips document CSS, the plan canvas palette, persistence and a toast.
+const bootTheme = await js(`document.documentElement.dataset.theme`);
+assert(bootTheme === 'light' || bootTheme === 'dark', `boots with a resolved theme (${bootTheme})`);
+if (bootTheme === 'dark') await shot('14-dark');
+const flipped = bootTheme === 'dark' ? 'light' : 'dark';
+await click('#theme-btn');
+assert(await js(`document.documentElement.dataset.theme`) === flipped, `theme button flips to ${flipped}`);
+{
+  const bodyBg = await js(`getComputedStyle(document.body).backgroundColor`);
+  const wantBg = flipped === 'dark' ? 'rgb(21, 22, 27)' : 'rgb(246, 244, 238)';
+  assert(bodyBg === wantBg, `CSS variables follow the ${flipped} palette (${bodyBg})`);
+  const gridHex = await js(`window.app.plan.grid.children[0].material.color.getHex()`);
+  const wantGrid = flipped === 'dark' ? 0x1d1f26 : 0xe8e4d9;
+  assert(gridHex === wantGrid, `plan grid rebuilt with the ${flipped} palette (0x${gridHex.toString(16)})`);
+}
+assert(await js(`[...document.querySelectorAll('#toasts .toast')].some(t => /${flipped} mode/i.test(t.textContent))`), 'theme change raises a toast');
+assert(await js(`localStorage.getItem('house-measurer.theme')`) === flipped, 'explicit theme choice persists');
+if (flipped === 'dark') await shot('14-dark');
+await click('#theme-btn');
+assert(await js(`document.documentElement.dataset.theme`) === bootTheme, 'theme toggles back');
+
+// Laser panel: opens from the header, holds status pill, offset and frames.
+await click('#laser-btn');
+assert(await js(`!document.getElementById('laser-sheet').hidden`), 'laser button opens the laser panel');
+assert(await js(`document.getElementById('laser-pill').textContent`) === 'off', 'laser pill reads off when disconnected');
+assert(await js(`!document.getElementById('laser-connect').hidden`), 'connect button offered');
+assert(await js(`document.getElementById('laser-disconnect').hidden`), 'disconnect hidden while off');
+assert(Math.abs(parseFloat(await js(`document.getElementById('laser-off').value`)) - 10) < 0.01, 'remote offset shown in the panel (default 10 cm)');
+await js(`document.getElementById('laser-off').value = '9.5'`);
+await click('#laser-setlo');
+assert(Math.abs(await js(`window.app.laser.remoteOffset`) - 0.095) < 1e-9, 'offset set from the panel');
+assert(await js(`[...document.querySelectorAll('#toasts .toast')].some(t => /9.5 cm/.test(t.textContent))`), 'offset change raises a toast');
+await js(`document.getElementById('laser-off').value = '10'`);
+await click('#laser-setlo');
+await click('#laser-close');
+assert(await js(`document.getElementById('laser-sheet').hidden`), 'laser panel closes');
+
+// Undo/redo live in the mode bar now, small but functional.
+assert(await js(`document.getElementById('undo').closest('#modebar') !== null`), 'undo sits in the mode bar');
 
 // No horizontal overflow at phone widths (pill + all header buttons live).
 for (const w of [412, 360]) {

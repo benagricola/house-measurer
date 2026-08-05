@@ -10,6 +10,7 @@ import { PlanView } from './plan.js';
 import { View3D } from './view3d.js';
 import { CATEGORIES, PRESETS, WALL_CATEGORIES, categoryColor, stairSteps, stairRise } from './items.js';
 import { LaserLink } from './laser.js';
+import { applyTheme, currentTheme, PLAN_PALETTES, SKY_PALETTES } from './theme.js';
 
 const CAM_KEY = 'house-measurer.cam';
 const $ = (id) => document.getElementById(id);
@@ -41,6 +42,19 @@ const plan = new PlanView($('plan'), $('overlay'), $('scalebar'), {
   onDragEnd: handleDragEnd,
 });
 let view3d = null; // created lazily on first 3D toggle
+
+// Theme: the document reads CSS variables off data-theme; the canvases
+// get their palettes pushed here. Explicit choice persists; otherwise
+// the OS preference decides.
+let theme = currentTheme();
+function setAppTheme(t, { persist = false } = {}) {
+  theme = applyTheme(t, { persist });
+  plan.setTheme(PLAN_PALETTES[t]);
+  view3d?.setTheme(SKY_PALETTES[t]);
+  const btn = $('theme-btn');
+  if (btn) btn.textContent = t === 'dark' ? 'light' : 'dark';
+}
+setAppTheme(theme);
 
 // Open the thickness/height editor for a wall segment (2D or 3D tap).
 function openWallEditor(seg) {
@@ -91,6 +105,29 @@ const offFloorRefs = () => ui.refs.filter((id) => !onFloor(store.point(id)));
 function say(text, cls = '') {
   ui.message = text ? { text, cls } : null;
   render();
+}
+
+// Transient toast pills, stacked top-centre above everything (sheets
+// included, so feedback from data-sheet actions is visible too).
+function toast(text, cls = '') {
+  const wrap = $('toasts');
+  if (!wrap) return;
+  const t = document.createElement('div');
+  t.className = 'toast ' + cls;
+  t.textContent = text;
+  wrap.appendChild(t);
+  while (wrap.children.length > 3) wrap.firstChild.remove();
+  requestAnimationFrame(() => t.classList.add('show'));
+  setTimeout(() => {
+    t.classList.remove('show');
+    setTimeout(() => t.remove(), 250);
+  }, 2400);
+}
+
+// Status line + toast in one: for milestones worth a glanceable ping.
+function note(text, cls = '') {
+  toast(text, cls);
+  say(text, cls);
 }
 
 function visibleLayers() {
@@ -247,6 +284,7 @@ function commitItemAt(rect, draft, mount = null) {
   });
   ui.mode = 'move';
   ui.selItem = id;
+  toast(`${draft.name} placed`, 'good');
   endFlow(`${draft.name} placed - drag to adjust, lock when happy`, 'good');
   return id;
 }
@@ -271,6 +309,7 @@ function commitAnchor() {
   ui.fields = ['', ''];
   ui.active = 0;
   plan.fitAll([...store.solved.pos.values()]);
+  toast('A and B placed', 'good');
   say('A-B fixed and walling started. Measure the corners in order round the room.');
 }
 
@@ -369,6 +408,7 @@ function commitPoint(side) {
     ? ' - "close room" when you are back at the start'
     : '';
   buzz([30, 60, 30]);
+  toast(`${name} placed`, 'good');
   say(`${name} placed - flip if it is on the wrong side${wallHint}`, 'good');
 }
 
@@ -414,6 +454,7 @@ function commitMultiPoint(forcedSide = null) {
   const res = (store.solved.pres.get(ui.lastId) || 0) * 100;
   const cls = res < 1 ? 'good' : res < 3 ? 'warn' : 'err';
   buzz([30, 60, 30]);
+  toast(`${name} fixed - worst residual ${res.toFixed(1)} cm`, cls);
   say(`${name} fixed from ${2 + extraRefs.length} references (side chosen automatically) - worst residual ${res.toFixed(1)} cm`, cls);
 }
 
@@ -458,7 +499,7 @@ function commitCheck() {
   if (Math.abs(r) >= 3) {
     say(`Check recorded, but it disagrees by ${Math.abs(r).toFixed(1)} cm - all points have shifted to a compromise. If it was wrong, delete or edit it in data.`, 'err');
   } else {
-    say(`Check recorded - residual ${r.toFixed(1)} cm`, Math.abs(r) < 1 ? 'good' : 'warn');
+    note(`Check recorded - residual ${r.toFixed(1)} cm`, Math.abs(r) < 1 ? 'good' : 'warn');
   }
 }
 
@@ -517,6 +558,7 @@ function pressOk() {
     const v = parseDistance(ui.fields[0]);
     if (v == null) return say('Type the corrected distance', 'warn');
     store.updateMeasurement(ui.flow.measId, v);
+    toast('Measurement updated', 'good');
     return endFlow('Measurement updated', 'good');
   }
   if (ui.flow?.kind === 'room-height') {
@@ -524,6 +566,7 @@ function pressOk() {
     const wallId = ui.flow.wallId;
     if (v != null) store.setWallHeight(wallId, v);
     const h = store.wall(wallId)?.height || store.state.roomHeight || 2.6;
+    toast(`Ceiling ${Math.round(h * 100)} cm for this room`, 'good');
     return endFlow(`Ceiling ${Math.round(h * 100)} cm for this room`, 'good');
   }
   if (ui.flow?.kind === 'wall-edit') {
@@ -543,6 +586,7 @@ function pressOk() {
     const bits = [];
     if (t != null) bits.push(`thickness ${Math.round(t * 100)} cm`);
     if (hv != null) bits.push(`height ${Math.round(hv * 100)} cm`);
+    toast(`Wall updated: ${bits.join(', ')}`, 'good');
     return endFlow(`Wall updated: ${bits.join(', ')}`, 'good');
   }
   if (ui.flow?.kind === 'item-c2' && parseDistance(ui.fields[0]) == null && parseDistance(ui.fields[1]) == null) {
@@ -839,6 +883,13 @@ function renderLog() {
 
   section('measurements');
   if (!store.state.measurements.length) addRow('<span class="dim">none yet</span>');
+  else {
+    addRow(
+      '<span class="log-name">between</span><span class="log-val">measured</span>' +
+      '<span class="log-res">error</span><span class="log-actions"></span>',
+      'log-cols'
+    );
+  }
   for (const m of store.state.measurements) {
     const a = store.point(m.p)?.name ?? '?', b = store.point(m.q)?.name ?? '?';
     const r = store.solved.mres.get(m.id);
@@ -904,7 +955,10 @@ function renderLog() {
   );
   addLayerRow.querySelector('[data-act="add"]').addEventListener('click', () => {
     const name = $('new-layer-name').value.trim();
-    if (name) store.addLayer(name);
+    if (name) {
+      store.addLayer(name);
+      toast(`Layer "${name}" added`, 'good');
+    }
   });
 
   section('floors');
@@ -934,7 +988,7 @@ function renderLog() {
     const off = parseFloat($('new-floor-off').value);
     const base = store.floor(store.state.activeFloor)?.elevation ?? 0;
     store.addFloor(name, base + (isFinite(off) ? off / 100 : 2.9));
-    say(`${name} added and active - tap a ghosted point below, then "stack here" to anchor it`, 'good');
+    note(`${name} added and active - tap a ghosted point below, then "stack here" to anchor it`, 'good');
     $('log-sheet').hidden = true;
   });
 
@@ -983,7 +1037,7 @@ function renderLog() {
       const i = store.state.floors.findIndex((f) => f.id === target.id);
       const below = store.state.floors[i - 1];
       store.setFloorElevation(target.id, below.elevation + total / 100);
-      say(`${target.name} set to ${total.toFixed(1)} cm above ${below.name}`, 'good');
+      note(`${target.name} set to ${total.toFixed(1)} cm above ${below.name}`, 'good');
     };
     applyRow.querySelector('[data-act="ap1"]').addEventListener('click', () => apply(stairTotal()));
     applyRow.querySelector('[data-act="ap2"]').addEventListener('click', () => apply(ceilTotal()));
@@ -996,7 +1050,10 @@ function renderLog() {
   );
   hRow.querySelector('[data-act="set"]').addEventListener('click', () => {
     const v = parseFloat($('room-h').value);
-    if (isFinite(v) && v > 100) store.setRoomHeight(v / 100);
+    if (isFinite(v) && v > 100) {
+      store.setRoomHeight(v / 100);
+      toast(`Default ceiling ${Math.round(v)} cm`, 'good');
+    }
   });
   const tRow = addRow(
     `<span class="log-name">default wall thickness (tap a wall in walls mode to override a segment)</span>` +
@@ -1005,35 +1062,11 @@ function renderLog() {
   );
   tRow.querySelector('[data-act="sett"]').addEventListener('click', () => {
     const v = parseFloat($('wall-t').value);
-    if (isFinite(v) && v > 1) store.setDefaultWallThickness(v / 100);
-  });
-
-  section('laser');
-  const linfo = laser.info && Object.values(laser.info).filter(Boolean).length
-    ? ` <span class="dim">(${[laser.info.maker, laser.info.model, laser.info.firmware && 'fw ' + laser.info.firmware].filter(Boolean).join(', ')})</span>`
-    : '';
-  addRow(laser.connected
-    ? `<span class="pill on">connected</span><span class="log-name">${laser.device?.name || 'laser measure'}${linfo}</span>`
-    : `<span class="pill off">off</span><span class="log-name dim">${laser.secureContextProblem || 'connect with the laser button in the header'}</span>`);
-  const loRow = addRow(
-    `<span class="log-name">remote shoot offset (front-to-back edge)</span>` +
-    `<input id="laser-off" type="number" step="0.1" value="${(laser.remoteOffset * 100).toFixed(1)}"> cm ` +
-    `<button data-act="setlo">set</button>`
-  );
-  loRow.querySelector('[data-act="setlo"]').addEventListener('click', () => {
-    const v = parseFloat($('laser-off').value);
-    if (isFinite(v) && v >= 0 && v < 50) {
-      laser.remoteOffset = v / 100;
-      try { localStorage.setItem('house-measurer.laserOffset', String(laser.remoteOffset)); } catch {}
-      say(`Remote readings now corrected by +${v.toFixed(1)} cm`, 'good');
+    if (isFinite(v) && v > 1) {
+      store.setDefaultWallThickness(v / 100);
+      toast(`Default wall thickness ${Math.round(v)} cm`, 'good');
     }
   });
-  if (laser.rawLog.length) {
-    addRow(`<span class="log-name dim">recent frames (for protocol decoding):</span>`);
-    for (const hex of laser.rawLog.slice(-6)) {
-      addRow(`<code style="font-size:10px;overflow-wrap:anywhere">${hex}</code>`);
-    }
-  }
 
   section('data');
   const dRow = addRow(
@@ -1045,9 +1078,9 @@ function renderLog() {
   dRow.querySelector('[data-act="copy"]').addEventListener('click', async () => {
     try {
       await navigator.clipboard.writeText(exportString());
-      say('JSON copied to clipboard', 'good');
+      toast('JSON copied to clipboard', 'good');
       $('log-sheet').hidden = true;
-    } catch { say('Clipboard blocked - use download instead', 'warn'); }
+    } catch { toast('Clipboard blocked - use download instead', 'warn'); }
   });
   dRow.querySelector('[data-act="import"]').addEventListener('click', () => {
     $('import-box').hidden = !$('import-box').hidden;
@@ -1081,7 +1114,7 @@ function importFromText(text) {
     $('log-sheet').hidden = true;
     $('import-box').hidden = true;
     plan.fitAll([...store.solved.pos.values()]);
-    say('Imported (undo restores the previous state)', 'good');
+    note('Imported (undo restores the previous state)', 'good');
   } catch (e) {
     say(`Import failed: ${e.message}`, 'err');
   }
@@ -1135,7 +1168,7 @@ function renderPanel() {
   $('movebar').style.display = ui.mode === 'move' && !ui.flow ? '' : 'none';
   $('itembar').style.display = ui.mode === 'item' && !ui.flow ? '' : 'none';
 
-  for (const b of document.querySelectorAll('#modebar button')) {
+  for (const b of document.querySelectorAll('#modebar button[data-mode]')) {
     b.classList.toggle('on', b.dataset.mode === ui.mode);
   }
 
@@ -1187,6 +1220,7 @@ function renderPanel() {
   $('close-room').style.display = closable && (ui.mode === 'measure' || ui.mode === 'wall') ? '' : 'none';
   $('wall-new').disabled = !ui.activeWallId && !open;
   $('show-work').classList.toggle('on', !!ui.showWork);
+  $('show-work3d').classList.toggle('on', !!ui.showWork);
   const fb = $('floor-btn');
   fb.style.display = store.state.floors.length > 1 ? '' : 'none';
   fb.textContent = store.floor(activeFloor())?.name ?? 'floor';
@@ -1348,7 +1382,7 @@ function renderPlan() {
       if (ang >= 30 && ang <= 150) continue;
       const bad = ang < 15 || ang > 165;
       content.labels.push({
-        key: `fq${pt.id}`, x: p.x, y: p.y, dy: 30,
+        key: `fq${pt.id}`, x: p.x, y: p.y, dy: 46,
         text: `fix ${Math.round(ang)}°`,
         cls: bad ? 'res err' : 'res warn',
       });
@@ -1626,6 +1660,58 @@ function surveyViz() {
       isLast: pt.id === ui.lastId,
     });
     viz.labels.push({ key: `p${pt.id}`, x: p.x, y: p.y, z: base + 0.55, text: pt.name, cls: 'name' });
+    // Detail mode carries the fix-quality diagnostics into 3D: residual
+    // badges and the shallow-ray warning, stacked under the pin label.
+    if (ui.showWork && onFloor(pt)) {
+      const res = store.solved.pres.get(pt.id) || 0;
+      if (res >= 0.001) {
+        const cls = res < 0.01 ? 'res good' : res < 0.03 ? 'res warn' : 'res err';
+        viz.labels.push({ key: `r3${pt.id}`, x: p.x, y: p.y, z: base + 0.32, text: `${(res * 100).toFixed(1)}`, cls });
+      }
+      if (pt.fix && pt.fix.stack == null) {
+        const r1 = pos(pt.fix.r1), r2 = pos(pt.fix.r2);
+        if (r1 && r2) {
+          const ang = angleDeg(r1, p, r2);
+          if (!(ang >= 30 && ang <= 150)) {
+            const bad = ang < 15 || ang > 165;
+            viz.labels.push({
+              key: `fq3${pt.id}`, x: p.x, y: p.y, z: base + 0.14,
+              text: `fix ${Math.round(ang)}°`, cls: bad ? 'res err' : 'res warn',
+            });
+          }
+        }
+      }
+    }
+  }
+  // Detail mode: interior angles at the wall corners of the active floor,
+  // just above floor level where the corner geometry is visible.
+  if (ui.showWork) {
+    for (const wall of store.state.walls) {
+      if (!onFloor(wall)) continue;
+      const solved = wall.pts.map(pos);
+      if (solved.some((p) => !p)) continue;
+      const n = solved.length;
+      const closed = wall.closed && n >= 3;
+      const ints = closed ? interiorAngles(solved) : null;
+      for (let i = 0; i < n; i++) {
+        if (!closed && (i === 0 || i === n - 1)) continue;
+        const v = solved[i];
+        const prev = solved[(i - 1 + n) % n], next = solved[(i + 1) % n];
+        const ang = closed ? ints[i] : angleDeg(prev, v, next);
+        const l1 = Math.hypot(prev.x - v.x, prev.y - v.y) || 1;
+        const l2 = Math.hypot(next.x - v.x, next.y - v.y) || 1;
+        let bx = (prev.x - v.x) / l1 + (next.x - v.x) / l2;
+        let by = (prev.y - v.y) / l1 + (next.y - v.y) / l2;
+        const bl = Math.hypot(bx, by);
+        if (bl < 1e-6) { bx = -(next.y - v.y) / l2; by = (next.x - v.x) / l2; }
+        else { bx /= bl; by /= bl; }
+        if (closed && ang > 180) { bx = -bx; by = -by; }
+        viz.labels.push({
+          key: `an3${wall.id}:${i}`, x: v.x + bx * 0.35, y: v.y + by * 0.35,
+          z: activeE + 0.08, text: `${Math.round(ang)}°`, cls: 'ang',
+        });
+      }
+    }
   }
   const pv = preview();
   if (pv) {
@@ -1719,12 +1805,20 @@ function toggle3D() {
   $('view3d-wrap').hidden = ui.view !== '3d';
   $('canvas-wrap').classList.toggle('behind', ui.view === '3d');
   if (ui.view === '3d') {
-    if (!view3d) view3d = new View3D($('plan3d'), $('overlay3d'), { onTap: handleTap3D });
+    if (!view3d) {
+      view3d = new View3D($('plan3d'), $('overlay3d'), { onTap: handleTap3D });
+      view3d.setTheme(SKY_PALETTES[theme]);
+    }
     view3d.refit();
     view3d.resize();
   }
   render();
 }
+
+$('theme-btn').addEventListener('click', () => {
+  setAppTheme(theme === 'dark' ? 'light' : 'dark', { persist: true });
+  toast(theme === 'dark' ? 'Dark mode' : 'Light mode', 'good');
+});
 
 // Bluetooth laser: a decoded reading fills the active field exactly as if
 // typed (metres with a decimal point), so you check it and press OK.
@@ -1775,8 +1869,65 @@ const laser = new LaserLink({
   onStatus: (text, cls) => {
     say(text, cls);
     renderPanel();
+    if (!$('laser-sheet').hidden) renderLaser();
+    // Connection milestones surface as toasts; a successful connect also
+    // closes the panel so measuring can start immediately.
+    if (/^Laser connected/.test(text)) {
+      toast(text, 'good');
+      $('laser-sheet').hidden = true;
+    } else if (/^Laser disconnected/.test(text)) {
+      toast(text, 'warn');
+    }
   },
-  onRaw: () => { if (!$('log-sheet').hidden) renderLog(); },
+  onRaw: () => { if (!$('laser-sheet').hidden) renderLaser(); },
+});
+
+// --- laser panel ------------------------------------------------------------
+
+function renderLaser() {
+  const on = !!laser.connected;
+  $('laser-pill').className = 'pill ' + (on ? 'on' : 'off');
+  $('laser-pill').textContent = on ? 'connected' : 'off';
+  const nameEl = $('laser-name');
+  nameEl.textContent = on
+    ? laser.deviceLabel
+    : laser.secureContextProblem || 'not connected';
+  nameEl.classList.toggle('dim', !on);
+  $('laser-connect').hidden = on;
+  $('laser-disconnect').hidden = !on;
+  const off = $('laser-off');
+  if (document.activeElement !== off) off.value = (laser.remoteOffset * 100).toFixed(1);
+  $('laser-frames').textContent = laser.rawLog.length ? laser.rawLog.join('\n') : 'none yet';
+}
+
+$('laser-btn').addEventListener('click', () => {
+  $('laser-sheet').hidden = false;
+  renderLaser();
+});
+$('laser-close').addEventListener('click', () => { $('laser-sheet').hidden = true; });
+$('laser-sheet').addEventListener('click', (e) => {
+  if (e.target === $('laser-sheet')) $('laser-sheet').hidden = true;
+});
+$('laser-connect').addEventListener('click', () => laser.connect());
+$('laser-disconnect').addEventListener('click', () => laser.disconnect());
+$('laser-setlo').addEventListener('click', () => {
+  const v = parseFloat($('laser-off').value);
+  if (isFinite(v) && v >= 0 && v < 50) {
+    laser.remoteOffset = v / 100;
+    try { localStorage.setItem('house-measurer.laserOffset', String(laser.remoteOffset)); } catch {}
+    toast(`Remote readings corrected by +${v.toFixed(1)} cm`, 'good');
+    renderLaser();
+  } else {
+    toast('Offset must be between 0 and 50 cm', 'warn');
+  }
+});
+$('laser-copy').addEventListener('click', async () => {
+  try {
+    await navigator.clipboard.writeText(laser.rawLog.join('\n'));
+    toast('Frames copied to clipboard', 'good');
+  } catch {
+    toast('Clipboard blocked - long-press the frame text to select it', 'warn');
+  }
 });
 try {
   const lo = parseFloat(localStorage.getItem('house-measurer.laserOffset'));
@@ -1785,15 +1936,10 @@ try {
 
 buildKeypad();
 
-$('laser-btn').addEventListener('click', () => {
-  if (laser.connected) laser.disconnect();
-  else laser.connect();
-});
-
 $('undo').addEventListener('click', () => store.undo());
 $('redo').addEventListener('click', () => store.redo());
 $('fit').addEventListener('click', () => {
-  if (ui.view === '3d' && view3d) { view3d.refit(); view3d.build(store.state, store.solved, visibleLayers()); }
+  if (ui.view === '3d' && view3d) { view3d.refit(); render(); }
   else plan.fitAll([...store.solved.pos.values()]);
 });
 $('view3d-btn').addEventListener('click', toggle3D);
@@ -1806,7 +1952,7 @@ $('help-overlay').addEventListener('click', (e) => {
   if (e.target === $('help-overlay')) $('help-overlay').hidden = true;
 });
 
-for (const b of document.querySelectorAll('#modebar button')) {
+for (const b of document.querySelectorAll('#modebar button[data-mode]')) {
   b.addEventListener('click', () => setMode(b.dataset.mode));
 }
 
@@ -1822,12 +1968,14 @@ $('wall-back').addEventListener('click', () => {
   else store.undo();
 });
 $('close-room').addEventListener('click', closeRoomAction);
-$('show-work').addEventListener('click', () => {
+const toggleWork = () => {
   ui.showWork = !ui.showWork;
   say(ui.showWork
     ? 'Detail on: wall angles shown; tap a single point to see its construction circles'
     : null);
-});
+};
+$('show-work').addEventListener('click', toggleWork);
+$('show-work3d').addEventListener('click', toggleWork);
 
 $('check-btn').addEventListener('click', commitCheck);
 $('stack-btn').addEventListener('click', stackRefs);
@@ -1864,7 +2012,7 @@ $('del-point').addEventListener('click', () => {
   const name = pt.name;
   store.deletePoint(id);
   ui.refs = [];
-  say(`${name} deleted (undo brings it back)`, 'good');
+  note(`${name} deleted (undo brings it back)`, 'good');
 });
 $('floor-btn').addEventListener('click', () => {
   const floors = store.state.floors;

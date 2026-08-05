@@ -12,27 +12,11 @@
 // }
 
 import * as THREE from 'three';
+import { PLAN_PALETTES } from './theme.js';
 
-const BG = 0xf6f4ee;
-const COLORS = {
-  gridMinor: 0xe8e4d9,
-  gridMajor: 0xd6d0bf,
-  segment: 0x8a867a,
-  ray: 0xb0aa9c,
-  wall: 0x3a3a40,
-  wallActive: 0xe8960c,
-  wallGhost: 0xc4beae,
-  ghostpt: 0xb5af9f,
-  circle: 0xc9c3b2,
-  anchor: 0x1f2a44,
-  point: 0x0e7a6f,
-  error: 0xc0392b,
-  refRing: 0xe8960c,
-  lastRing: 0x9fbfba,
-  ghost: 0x0e7a6f,
-  halo: 0xe8960c,
-  handle: 0xe8960c,
-};
+// Mutable working palette - setTheme() swaps its entries in place so
+// every COLORS.x lookup in rebuild() picks up the active theme.
+const COLORS = { ...PLAN_PALETTES.light.colors };
 
 const NICE = [0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50];
 
@@ -45,7 +29,7 @@ export class PlanView {
 
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
     this.renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
-    this.renderer.setClearColor(BG);
+    this.renderer.setClearColor(PLAN_PALETTES.light.bg);
 
     this.scene = new THREE.Scene();
     this.camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 100);
@@ -84,6 +68,19 @@ export class PlanView {
     this.ro = new ResizeObserver(() => this.resize());
     this.ro.observe(canvas.parentElement);
     this.resize();
+  }
+
+  // Swap the working palette and rebuild everything that referenced it.
+  // Cached materials keyed by the old colors are dropped (a handful of
+  // objects, once per toggle - not worth disposing individually).
+  setTheme(palette) {
+    Object.assign(COLORS, palette.colors);
+    this.renderer.setClearColor(palette.bg);
+    this.materials.clear();
+    this.scene.remove(this.grid);
+    this.grid = this.buildGrid();
+    this.scene.add(this.grid);
+    this.rebuild();
   }
 
   mat(kind, color, opacity = 1) {

@@ -43,19 +43,7 @@ export class View3D {
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
     this.scene = new THREE.Scene();
-    const sky = document.createElement('canvas');
-    sky.width = 2; sky.height = 256;
-    const sctx = sky.getContext('2d');
-    const grad = sctx.createLinearGradient(0, 0, 0, 256);
-    grad.addColorStop(0, '#f4efe3');
-    grad.addColorStop(0.6, '#eae4d4');
-    grad.addColorStop(1, '#ded7c4');
-    sctx.fillStyle = grad;
-    sctx.fillRect(0, 0, 2, 256);
-    const skyTex = new THREE.CanvasTexture(sky);
-    skyTex.colorSpace = THREE.SRGBColorSpace;
-    this.scene.background = skyTex;
-    this.scene.fog = new THREE.Fog(0xe2dbc9, 26, 70);
+    this.setTheme({ stops: ['#f4efe3', '#eae4d4', '#ded7c4'], fog: 0xe2dbc9 });
 
     this.camera = new THREE.PerspectiveCamera(55, 1, 0.05, 500);
     this.camera.position.set(4, 5, 7);
@@ -120,6 +108,27 @@ export class View3D {
 
     this.ro = new ResizeObserver(() => this.resize());
     this.ro.observe(canvas.parentElement);
+  }
+
+  // Backdrop theming: the scene keeps its daylight lighting (the model
+  // should look the same), only the sky gradient and fog dim so the 3D
+  // view is not a white blast in dark mode.
+  setTheme({ stops, fog }) {
+    const sky = document.createElement('canvas');
+    sky.width = 2; sky.height = 256;
+    const sctx = sky.getContext('2d');
+    const grad = sctx.createLinearGradient(0, 0, 0, 256);
+    grad.addColorStop(0, stops[0]);
+    grad.addColorStop(0.6, stops[1]);
+    grad.addColorStop(1, stops[2]);
+    sctx.fillStyle = grad;
+    sctx.fillRect(0, 0, 2, 256);
+    const skyTex = new THREE.CanvasTexture(sky);
+    skyTex.colorSpace = THREE.SRGBColorSpace;
+    this.scene.background?.dispose?.();
+    this.scene.background = skyTex;
+    this.scene.fog = new THREE.Fog(fog, 26, 70);
+    this.requestRender?.();
   }
 
   initTap() {

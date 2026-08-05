@@ -231,6 +231,7 @@ export class LaserLink {
         acceptAllDevices: true,
         optionalServices,
       });
+      this.status('Connecting...');
       this.device.addEventListener('gattserverdisconnected', () => {
         this.connected = false;
         this.status('Laser disconnected', 'warn');
@@ -288,17 +289,10 @@ export class LaserLink {
       }
       this.connected = hooked > 0;
       if (hooked) {
-        // Say WHICH protocol matched - the advertised name (e.g. "UD 50C
-        // x6225") never says "Bosch", and recognition keys on the control
-        // characteristic, not the name.
+        // The protocol details go to the frame log, not the status line -
+        // the user just needs "connected" plus which device it is.
         this.boschChar = boschChar;
         this.rawLog.push(`protocol: ${this.profileName ?? 'generic'}${boschChar ? `, control ${boschChar.uuid.slice(0, 8)}` : ''}`);
-        const proto = boschChar
-          ? `${this.profileName ?? 'Bosch'} protocol, shoot available`
-          : this.profileName
-            ? `${this.profileName} protocol`
-            : 'generic mode - frames will be logged';
-        this.status(`Laser connected (${this.device.name || 'unnamed'}) - ${proto}`, 'good');
         // Bosch meters stay silent until auto-sync is enabled on their
         // control characteristic; other meters get a harmless generic
         // poke (framed protocols drop checksum failures).
@@ -309,7 +303,11 @@ export class LaserLink {
         // Ask for the settings container once the sync handshake is done;
         // the reply lands in the frame log for reference-edge research.
         if (boschChar) setTimeout(() => this._probeSettings(), 1600);
-        this.readDeviceInfo(server).catch(() => {});
+        // Read model/maker first so the connected message can name the
+        // device properly (the advertised name is often empty or cryptic).
+        this.readDeviceInfo(server).catch(() => {}).then(() => {
+          if (this.connected) this.status(`Laser connected: ${this.deviceLabel}`, 'good');
+        });
       } else {
         this.status(`Connected, but no readable channel (services seen: ${svcList}). If the list is empty, pair the meter in the system Bluetooth settings first, then retry.`, 'warn');
       }
@@ -342,6 +340,17 @@ export class LaserLink {
   }
 
   get canTrigger() { return this.connected && !!this.boschChar; }
+
+  // Human name for the connected meter: GATT device-info model (plus the
+  // maker when it is short enough to help), else the advertised name.
+  get deviceLabel() {
+    const i = this.info || {};
+    if (i.model) {
+      const maker = i.maker && i.maker.length <= 12 ? `${i.maker} ` : '';
+      return `${maker}${i.model}`;
+    }
+    return this.device?.name || 'laser measure';
+  }
 
   // Read-only settings request. While the reply is pending, the first
   // non-push frame is labelled and swallowed so a short settings
