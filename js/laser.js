@@ -183,6 +183,12 @@ export class LaserLink {
     this.rawLog = [];      // recent frames as hex strings, newest last
     this._lastValue = null;
     this._lastAt = 0;
+    // Remote-trigger replies measure from the FRONT edge of the device;
+    // button measurements use the configured reference (back edge by
+    // default). The difference is the meter's body length - observed as
+    // exactly 100 mm on a UniversalDistance 50C. Adjustable in the data
+    // sheet; applied to remote replies only.
+    this.remoteOffset = 0.100;
   }
 
   get available() {
@@ -368,8 +374,12 @@ export class LaserLink {
     this.rawLog.push(hex);
     if (this.rawLog.length > 24) this.rawLog.shift();
     this.cb.onRaw?.(hex);
-    const v = profile.parse(bytes);
+    let v = profile.parse(bytes);
     if (v == null) return;
+    // Reference-edge correction for remote-trigger replies (00 04 ...).
+    if (this.boschChar && bytes[0] === 0x00 && bytes[1] === 0x04) {
+      v += this.remoteOffset || 0;
+    }
     // Meters often repeat frames; drop identical values arriving in a burst.
     const now = Date.now();
     if (this._lastValue === v && now - this._lastAt < 800) return;

@@ -46,6 +46,20 @@ test('Leica DISTO frame: bare float32 metres', () => {
   close(parseDistoFrame(f32(7.654)), 7.654);
 });
 
+test('remote-trigger replies get the reference-edge offset; pushes do not', async () => {
+  const { LaserLink } = await import('../js/laser.js');
+  const got = [];
+  const ll = new LaserLink({ onMeasurement: (m) => got.push(m) });
+  ll.boschChar = {}; // Bosch control channel present
+  ll.remoteOffset = 0.1;
+  // Remote reply: 3141 ticks = 0.15705 m + 0.100 offset.
+  ll.handleFrame(new Uint8Array([0x00, 0x04, 0x45, 0x0c, 0x00, 0x00, 0x60]), { parse: parseBoschStrict });
+  close(got[0], 0.25705, 1e-6);
+  // Push indication (button press): no offset.
+  ll.handleFrame(new Uint8Array([0xc0, 0x55, 0x10, 0x06, 0, 0, 0, ...f32(3.425), 0x9a]), { parse: parseBoschStrict });
+  close(got[1], 3.425, 1e-6);
+});
+
 test('Bosch strict: only known frames decode; the auto-sync ACK is ignored', () => {
   // The real ACK captured from a UniversalDistance 50C - its status bytes
   // decode to ~22.9 m under the legacy heuristic and must NOT surface.

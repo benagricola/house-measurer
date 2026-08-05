@@ -1015,6 +1015,19 @@ function renderLog() {
   addRow(laser.connected
     ? `<span class="pill on">connected</span><span class="log-name">${laser.device?.name || 'laser measure'}${linfo}</span>`
     : `<span class="pill off">off</span><span class="log-name dim">${laser.secureContextProblem || 'connect with the laser button in the header'}</span>`);
+  const loRow = addRow(
+    `<span class="log-name">remote shoot offset (front-to-back edge)</span>` +
+    `<input id="laser-off" type="number" step="0.1" value="${(laser.remoteOffset * 100).toFixed(1)}"> cm ` +
+    `<button data-act="setlo">set</button>`
+  );
+  loRow.querySelector('[data-act="setlo"]').addEventListener('click', () => {
+    const v = parseFloat($('laser-off').value);
+    if (isFinite(v) && v >= 0 && v < 50) {
+      laser.remoteOffset = v / 100;
+      try { localStorage.setItem('house-measurer.laserOffset', String(laser.remoteOffset)); } catch {}
+      say(`Remote readings now corrected by +${v.toFixed(1)} cm`, 'good');
+    }
+  });
   if (laser.rawLog.length) {
     addRow(`<span class="log-name dim">recent frames (for protocol decoding):</span>`);
     for (const hex of laser.rawLog.slice(-6)) {
@@ -1726,6 +1739,7 @@ const buzz = (p) => {
 };
 
 const laser = new LaserLink({
+
   onMeasurement: (m) => {
     buzz(25);
     const txt = m.toFixed(3).replace(/0+$/, '').replace(/\.$/, '.0');
@@ -1764,6 +1778,10 @@ const laser = new LaserLink({
   },
   onRaw: () => { if (!$('log-sheet').hidden) renderLog(); },
 });
+try {
+  const lo = parseFloat(localStorage.getItem('house-measurer.laserOffset'));
+  if (isFinite(lo) && lo >= 0 && lo < 0.5) laser.remoteOffset = lo;
+} catch {}
 
 buildKeypad();
 
