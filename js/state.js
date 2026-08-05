@@ -238,6 +238,16 @@ export class Store {
     return { a, b };
   }
 
+  // Seed the auto-wall run with already-existing points, in order - used
+  // when walling gets switched on after the anchors were placed without
+  // a run (reference-first flow), so the outline still starts at A-B.
+  seedWallRun(ids) {
+    if (!ids.length) return;
+    this.commit((s) => {
+      for (const id of ids) this._autoWallAppend(s, id);
+    });
+  }
+
   // autoWall: chain the new point into the active floor's open wall run in
   // the same undo step. extras: additional [{p, d}] distances to more
   // references, committed atomically - the redundancy that lets the

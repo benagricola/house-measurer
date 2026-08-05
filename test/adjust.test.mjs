@@ -96,6 +96,21 @@ test('itemCorners and pointInItem respect rotation', () => {
   assert.ok(!pointInItem({ x: 1.9, y: 1 }, it));
 });
 
+test('store: reference-first anchors take no run; seedWallRun starts it at A-B', () => {
+  const st = new Store(memStorage());
+  const { a, b } = st.setAnchors(3.42, { wall: false });
+  assert.equal(st.state.walls.length, 0, 'no run while walling is off');
+  const c = st.addPoint(a, b, 2, 2.5, 1, { autoWall: false });
+  assert.equal(st.state.walls.length, 0, 'reference point stays out of walls');
+  st.seedWallRun([a, b]);
+  assert.equal(st.state.walls.length, 1);
+  assert.deepEqual(st.state.walls[0].pts, [a, b], 'run seeded with the anchor pair');
+  const d = st.addPoint(a, c, 2, 2, 1, { autoWall: true });
+  assert.deepEqual(st.state.walls[0].pts, [a, b, d], 'chaining continues from the seed');
+  st.undo();
+  assert.deepEqual(st.state.walls[0].pts, [a, b], 'undo removes the chained point and its link');
+});
+
 test('store: anchors start a wall run; points auto-chain; close; heights', () => {
   const st = new Store(memStorage());
   const { a, b } = st.setAnchors(4);

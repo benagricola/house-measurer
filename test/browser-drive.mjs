@@ -185,14 +185,27 @@ for (let i = 0; i < 40 && !(await js('!!window.app').catch(() => false)); i++) a
 
 await shot('01-empty');
 
-// --- anchors start the wall run --------------------------------------------
+// --- coach + reference-first anchors ---------------------------------------
+assert(await js(`!document.getElementById('coach').hidden`), 'coach shows on a fresh survey');
+assert(/baseline/i.test(await js(`document.getElementById('coach-text').textContent`)), 'first tip explains the baseline');
 await keys(['3', '4', '2']);
 await shot('02-anchor-typing');
 await key('ok');
 let st = await state();
 assert(st.points.length === 2, 'anchors created');
 assert(near(st.measurements[0].d, 3.42), 'A-B = 3.42 m');
-assert(st.walls.length === 1 && st.walls[0].pts.length === 2, 'anchors started the wall run');
+assert(st.walls.length === 0, 'reference-first default: anchors start no wall run');
+assert(/reference/i.test(await js(`document.getElementById('coach-text').textContent`)), 'coach advances to reference points');
+await click('#coach-hide');
+assert(await js(`document.getElementById('coach').hidden`), 'hide tips dismisses the coach');
+assert(await js(`localStorage.getItem('house-measurer.coach')`) === 'done', 'dismissal persists');
+// Wall-first path for the rest of the suite: turn walling on - the run
+// gets seeded with the anchor pair.
+assert(await js(`document.getElementById('pause-btn').textContent`) === 'walling: off', 'walling reads off by default');
+await click('#pause-btn');
+st = await state();
+assert(st.walls.length === 1 && st.walls[0].pts.length === 2, 'walling on seeds the run with A and B');
+assert(await js(`localStorage.getItem('house-measurer.walling')`) === 'on', 'walling choice persists');
 
 // C measured in perimeter order (refs kept as A, B): 4.27 m and 2.50 m.
 await keys(['4', '2', '7']);

@@ -32,7 +32,15 @@ const ui = {
   flow: null,        // placement / edit flow, see startFlow()
   flowSide: 1,       // candidate side while a flow preview is active
   drag: null,        // transient item drag (not yet committed)
+  // Reference-first by default: new points are reference-only until the
+  // user turns walling on (or builds walls by hand in walls mode).
+  wallPause: true,
+  coachDone: false,
 };
+try {
+  ui.wallPause = localStorage.getItem('house-measurer.walling') !== 'on';
+  ui.coachDone = localStorage.getItem('house-measurer.coach') === 'done';
+} catch {}
 
 const plan = new PlanView($('plan'), $('overlay'), $('scalebar'), {
   onTap: handleTap,
@@ -304,13 +312,15 @@ function toggleRef(id) {
 function commitAnchor() {
   const d = parseDistance(ui.fields[0]);
   if (d == null) return say('Type the distance between anchor A and anchor B', 'warn');
-  const { a, b } = store.setAnchors(d);
+  const { a, b } = store.setAnchors(d, { wall: !ui.wallPause });
   ui.refs = [a, b];
   ui.fields = ['', ''];
   ui.active = 0;
   plan.fitAll([...store.solved.pos.values()]);
   toast('A and B placed', 'good');
-  say('A-B fixed and walling started. Measure the corners in order round the room.');
+  say(ui.wallPause
+    ? 'A-B fixed. Fix reference points around the space next - then build the outline in walls mode (or turn walling on to chain as you measure).'
+    : 'A-B fixed and walling started. Measure the corners in order round the room.');
 }
 
 // Explain WHY two circles cannot meet, with the numbers and a way out.
@@ -492,6 +502,7 @@ function commitCheck() {
     return say(`${n1} to ${n2} currently solves to ${fmtDist(predicted)}, but you typed ${fmtDist(v)} - ${(diff * 100).toFixed(0)} cm apart. Typo or cm/m mix-up? Press record again to keep it anyway.`, 'err');
   }
   ui.checkArm = null;
+  if (!ui.coachDone) coachFinish();
   const id = store.addMeasurement(ui.refs[0], ui.refs[1], v);
   const r = (store.solved.mres.get(id) || 0) * 100;
   ui.fields = ['', ''];
@@ -1207,7 +1218,7 @@ function renderPanel() {
     $('unwall-btn').style.display = ui.mode === 'measure' && !ui.flow && inWall ? '' : 'none';
     const autoWalling = !anchorMode() && !store.hasClosedRoomOn(activeFloor());
     $('pause-btn').style.display = ui.mode === 'measure' && !ui.flow && autoWalling ? '' : 'none';
-    $('pause-btn').textContent = ui.wallPause ? 'walling: paused' : 'walling: on';
+    $('pause-btn').textContent = ui.wallPause ? 'walling: off' : 'walling: on';
     $('pause-btn').classList.toggle('on', !ui.wallPause);
     $('auto-btn').style.display = laser.connected && ui.mode === 'measure' && !ui.flow ? '' : 'none';
     $('auto-btn').textContent = `auto: ${ui.autoLaser === true ? 'on' : 'off'}`;
@@ -1318,14 +1329,17 @@ function renderPlan() {
     content.points.push({ x: 0, y: 0, style: 'anchor' });
     content.labels.push({ key: 'pA', x: 0, y: 0, text: 'A', cls: 'name', dy: -18 });
     if (d != null) {
-      // The first measurement IS the first wall - preview it as one.
+      // With walling on the first measurement IS the first wall; with the
+      // reference-first default it is the baseline the survey hangs off.
       content.ghosts.push({ x: d, y: 0, primary: true });
-      content.segments.push({
-        x1: 0, y1: 0, x2: d, y2: 0, style: 'wall',
-        t: store.state.wallThickness ?? 0.09,
-      });
+      content.segments.push(ui.wallPause
+        ? { x1: 0, y1: 0, x2: d, y2: 0, style: 'ab' }
+        : { x1: 0, y1: 0, x2: d, y2: 0, style: 'wall', t: store.state.wallThickness ?? 0.09 });
       content.labels.push({ key: 'pB', x: d, y: 0, text: 'B', cls: 'name', dy: -18 });
-      content.labels.push({ key: 'dAB', x: d / 2, y: 0, text: `first wall ${fmtDist(d)}`, cls: 'ray', dy: 16 });
+      content.labels.push({
+        key: 'dAB', x: d / 2, y: 0,
+        text: `${ui.wallPause ? 'A to B' : 'first wall'} ${fmtDist(d)}`, cls: 'ray', dy: 16,
+      });
       plan.fitAll([{ x: 0, y: 0 }, { x: d, y: 0 }]);
     }
     plan.update(content);
@@ -1737,9 +1751,47 @@ function surveyViz() {
   return viz;
 }
 
+// First-survey coach: four stage-driven tips that follow the actual
+// survey state (baseline -> references -> outline -> checks). One tap
+// hides them for good; "clear everything" or the help card brings them
+// back. The card ignores pointer events except its hide button, so it
+// never blocks canvas taps.
+const COACH_TIPS = [
+  'The baseline: tape two marks (A and B) at either end of a straight wall, measure between them with the laser, type it in. Every other point gets fixed by distances back to points like these.',
+  'Reference points first: new points are reference-only while walling is off. Fix a few spread around the space - especially ones that can see what A and B cannot (through doorways, past corners). Rays crossing near 90 degrees make the strongest fixes.',
+  'Build the outline: in walls mode tap the corner points in order, and tap the first corner again to close the room (the ceiling height is asked once closed). Or turn walling: on and new points chain into the outline as you measure them.',
+  'Tighten it: select two points, type a measured distance, press record. Disagreement shows up as residuals, and the detail button reveals wall angles and weak fixes. That is the whole loop - references, corners, checks.',
+];
+
+function coachStage() {
+  if (ui.coachDone || ui.flow) return null;
+  if (anchorMode()) return 0;
+  if (store.hasClosedRoomOn(activeFloor())) return 3;
+  const refCount = store.state.points.filter((p) => onFloor(p)).length - 2;
+  if (ui.wallPause && refCount < 2) return 1;
+  return 2;
+}
+
+function renderCoach() {
+  const el = $('coach');
+  if (!el) return;
+  const stage = coachStage();
+  el.hidden = stage == null;
+  if (stage == null) return;
+  $('coach-text').textContent = COACH_TIPS[stage];
+  $('coach-step').textContent = `tip ${stage + 1} of ${COACH_TIPS.length}`;
+}
+
+function coachFinish() {
+  ui.coachDone = true;
+  try { localStorage.setItem('house-measurer.coach', 'done'); } catch {}
+  renderCoach();
+}
+
 function render() {
   validateUi();
   renderPanel();
+  renderCoach();
   if (ui.view === '3d') {
     if (view3d) view3d.build(store.state, store.solved, visibleLayers(), surveyViz());
   } else {
@@ -2012,6 +2064,13 @@ $('view3d-btn').addEventListener('click', toggle3D);
 $('log-btn').addEventListener('click', () => { $('log-sheet').hidden = false; renderLog(); });
 $('log-close').addEventListener('click', () => { $('log-sheet').hidden = true; });
 $('log-sheet').addEventListener('click', (e) => { if (e.target === $('log-sheet')) $('log-sheet').hidden = true; });
+$('coach-hide').addEventListener('click', coachFinish);
+$('coach-show').addEventListener('click', () => {
+  ui.coachDone = false;
+  try { localStorage.removeItem('house-measurer.coach'); } catch {}
+  $('help-overlay').hidden = true;
+  render();
+});
 $('help').addEventListener('click', () => { $('help-overlay').hidden = false; });
 $('help-close').addEventListener('click', () => { $('help-overlay').hidden = true; });
 $('help-overlay').addEventListener('click', (e) => {
@@ -2054,9 +2113,16 @@ $('unwall-btn').addEventListener('click', () => {
 });
 $('pause-btn').addEventListener('click', () => {
   ui.wallPause = !ui.wallPause;
+  try { localStorage.setItem('house-measurer.walling', ui.wallPause ? 'off' : 'on'); } catch {}
+  if (!ui.wallPause && !store.hasClosedRoomOn(activeFloor()) && !store.openWall()) {
+    // Walling switched on with no outline yet: start the run at the
+    // anchor pair so the chain continues A-B-... as expected.
+    const anchors = store.state.points.filter((p) => onFloor(p) && !p.fix);
+    if (anchors.length === 2) store.seedWallRun(anchors.map((p) => p.id));
+  }
   say(ui.wallPause
-    ? 'Walling paused: new points are reference-only until you resume'
-    : 'Walling resumed: new points chain into the outline again');
+    ? 'Walling off: new points are reference-only'
+    : 'Walling on: new points chain into the wall outline until the room closes');
 });
 $('shoot-btn').addEventListener('click', () => laser.remoteTrigger());
 $('auto-btn').addEventListener('click', () => {
@@ -2146,6 +2212,12 @@ $('clear-all').addEventListener('click', (e) => {
     store.clearAll();
     ui.refs = []; ui.fields = ['', '']; ui.lastId = null; ui.active = 0;
     ui.flow = null; ui.selItem = null; ui.activeWallId = null; ui.mode = 'measure';
+    ui.coachDone = false;
+    ui.wallPause = true;
+    try {
+      localStorage.removeItem('house-measurer.coach');
+      localStorage.removeItem('house-measurer.walling');
+    } catch {}
     delete b.dataset.armed;
     b.textContent = 'clear everything';
     $('help-overlay').hidden = true;

@@ -329,13 +329,19 @@ export class LaserLink {
   }
 
   // The Bosch char is write-WITHOUT-response only - the default write
-  // mode fails on it.
+  // mode fails on it. Tolerates a vanished characteristic (disconnect
+  // mid-sequence) rather than throwing from a timer callback.
   _write(ch, bytes) {
+    if (!ch) return Promise.resolve();
     const buf = new Uint8Array(bytes);
-    const p = !ch.properties.write && ch.writeValueWithoutResponse
-      ? ch.writeValueWithoutResponse(buf)
-      : ch.writeValue(buf);
-    return p.catch(() => {});
+    try {
+      const p = !ch.properties.write && ch.writeValueWithoutResponse
+        ? ch.writeValueWithoutResponse(buf)
+        : ch.writeValue(buf);
+      return Promise.resolve(p).catch(() => {});
+    } catch {
+      return Promise.resolve();
+    }
   }
 
   get canTrigger() { return this.connected && !!this.boschChar; }

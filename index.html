@@ -29,6 +29,13 @@
       <div id="overlay"></div>
       <div id="scalebar"></div>
       <button id="show-work" title="show wall angles and the circles behind each fixed point">detail</button>
+      <div id="coach" hidden>
+        <div id="coach-text"></div>
+        <div id="coach-row">
+          <span id="coach-step"></span>
+          <button id="coach-hide">hide tips</button>
+        </div>
+      </div>
     </div>
     <div id="view3d-wrap" hidden>
       <canvas id="plan3d"></canvas>
@@ -164,8 +171,8 @@
       <li>Mark two anchor points A and B (ideally corners) with tape. Measure A to B and type it in.</li>
       <li>For every new point: tap 2 already-fixed points, type the measured distance to each, press OK. Two positions match - the marked one is placed; tap the other candidate or press flip if it is on the wrong side.</li>
       <li>For a stronger fix, tap up to 4 references (spread apart as seen from where you stand - rays crossing at 60-120 degrees are ideal) and enter the distances one at a time. Extra distances average the laser noise down, expose a bad reading as a residual, and pick the correct side automatically.</li>
-      <li>Until your first room is closed, each new point chains into the wall outline automatically - measure the corners in order round the room, then press <b>close room</b> and give the ceiling height. Fix a wrong link in walls mode with step back.</li>
-      <li>When A and B fall out of sight, place extra reference points first: press <b>walling: on</b> to pause the auto-chain, fix the reference points, resume, and continue the outline from the new references. If a reference already slipped into the outline, select it and press <b>unwall</b> - the loop reroutes past it and the point stays usable.</li>
+      <li>New points are <b>reference-only</b> by default (walling: off). Fix reference points around the space first - especially ones that can see what A and B cannot (through doorways, past corners) - then build each room in <b>walls</b> mode: tap the corners in order, tap the first again to close, and give the ceiling height.</li>
+      <li>Prefer chaining instead? Toggle <b>walling: on</b> and each new point links into the wall outline as you measure, until the room closes (turning it on before any outline exists starts the run at A-B). Fix a wrong link in walls mode with step back; if a reference point slipped into the outline, select it and press <b>unwall</b> - the loop reroutes past it and the point stays usable.</li>
       <li>Extra check measurements (e.g. a room diagonal): select the 2 points, type the distance, press record. Every point is adjusted to best fit all measurements; disagreement shows as residuals, and a reading far off the current solution is challenged before it is accepted. Edit or delete any measurement in the data sheet. The <b>detail</b> button overlays the interior angle at every wall corner and, for a selected point, the circles it was fixed from; while typing a new point the proposed wall's corner angle previews live.</li>
     </ol>
     <h2>walls, items, 3D</h2>
@@ -179,6 +186,7 @@
     <p><b>Auto mode</b> (the <b>auto</b> toggle next to the reference slots, off by default): each laser reading advances the survey by itself. The number of selected references is the contract: with 2 selected, every pair of readings places a point; with 3 or 4 selected, every point takes that many readings and commits on the last one - then the next point begins automatically against the same references. The status line always names which reference to shoot next, and the phone buzzes: short tick = reading logged, triple = point placed, long = reading refused. A mis-fired shot is retracted with <b>del</b> (steps back one reading); Escape restarts the current fix. Every guard still applies: impossible pairs are refused with an explanation, flip swaps a wrong side, and undo unwinds anything.</p>
     <p>The <b>shoot</b> button (Bosch meters) triggers a measurement remotely - the laser arms, then fires, with no button press to shake the aim. Remote readings measure from the device's FRONT edge, so a corrective offset (the body length, default 10 cm, adjustable in the laser panel) is added to match your usual back-edge readings. The device screen stays at 0 for remote shots - compare values in the app field instead. If the meter declines, the status says so. The <b>calibrate</b> button in the laser panel derives the offset from the meter itself: prop it still, press its measure button once, and the app fires a remote shot and reads the body length off the difference.</p>
     <p class="fine">Everything is saved on this device automatically. Export JSON from the log sheet for backup or to move devices.</p>
+    <button id="coach-show">show guided tips again</button>
     <button id="clear-all">clear everything</button>
   </div>
 </div>
