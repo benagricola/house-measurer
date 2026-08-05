@@ -60,6 +60,29 @@ test('remote-trigger replies get the reference-edge offset; pushes do not', asyn
   close(got[1], 3.425, 1e-6);
 });
 
+test('settings probe reply is swallowed, never decoded as a distance', async () => {
+  const { LaserLink } = await import('../js/laser.js');
+  const got = [];
+  const ll = new LaserLink({ onMeasurement: (m) => got.push(m) });
+  ll.boschChar = {};
+  ll._expectSettings = true;
+  // A 4-byte settings container would decode as a plausible distance
+  // under the 00 04 remote-reply branch - it must be labelled and dropped.
+  ll.handleFrame(new Uint8Array([0x00, 0x04, 0x45, 0x0c, 0x00, 0x00, 0x60]), { parse: parseBoschStrict });
+  assert.equal(got.length, 0);
+  assert.ok(ll.rawLog.at(-1).startsWith('settings: 00 04'));
+  assert.equal(ll._expectSettings, false);
+  // A push frame does NOT consume the pending probe...
+  ll._expectSettings = true;
+  ll.handleFrame(new Uint8Array([0xc0, 0x55, 0x10, 0x06, 0, 0, 0, ...f32(2.5), 0x9a]), { parse: parseBoschStrict });
+  close(got[0], 2.5, 1e-6);
+  assert.equal(ll._expectSettings, true);
+  // ...and once the window closes, remote replies decode again.
+  ll._expectSettings = false;
+  ll.handleFrame(new Uint8Array([0x00, 0x04, 0x45, 0x0c, 0x00, 0x00, 0x60]), { parse: parseBoschStrict });
+  close(got[1], 0.15705 + ll.remoteOffset, 1e-6);
+});
+
 test('Bosch strict: only known frames decode; the auto-sync ACK is ignored', () => {
   // The real ACK captured from a UniversalDistance 50C - its status bytes
   // decode to ~22.9 m under the legacy heuristic and must NOT surface.
