@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   parseAsciiFrame, parseFloat32Frame, parseUint32mmFrame, parseAnyFrame,
-  parseDistoFrame, parseBoschFrame,
+  parseDistoFrame, parseBoschFrame, parseBoschStrict,
 } from '../js/laser.js';
 
 const close = (a, b, eps = 1e-4) => assert.ok(a != null && Math.abs(a - b) < eps, `${a} !~ ${b}`);
@@ -44,6 +44,18 @@ test('parseAnyFrame prefers ascii, then float32, then mm', () => {
 
 test('Leica DISTO frame: bare float32 metres', () => {
   close(parseDistoFrame(f32(7.654)), 7.654);
+});
+
+test('Bosch strict: only known frames decode; the auto-sync ACK is ignored', () => {
+  // The real ACK captured from a UniversalDistance 50C - its status bytes
+  // decode to ~22.9 m under the legacy heuristic and must NOT surface.
+  const ack = [0x00, 0x10, 0x02, 0x00, 0x07, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xd8];
+  assert.equal(parseBoschStrict(ack), null);
+  assert.notEqual(parseBoschFrame(ack), null, 'legacy parser would have surfaced it');
+  close(parseBoschStrict([0xc0, 0x55, 0x10, 0x06, 0, 0, 0, ...f32(3.425), 0x9a]), 3.425);
+  close(parseBoschStrict([0x00, 0x04, ...f32(2.618), 0x5c]), 2.618);
+  assert.equal(parseBoschStrict(ascii('2.345')), null, 'no heuristic fallback');
 });
 
 test('Bosch frames: 50-27/UniversalDistance indication and legacy MT reply', () => {

@@ -84,6 +84,24 @@ export function parseDistoFrame(bytes) {
 // frame, and Bosch's floats are not necessarily whole millimetres.
 export const BOSCH_AUTOSYNC = [0xc0, 0x55, 0x02, 0x01, 0x00, 0x1a];
 
+// Strict decoder for the UniversalDistance/AdvancedDistance generation:
+// ONLY the two known measurement frame shapes decode; every other frame
+// (auto-sync ACKs, status frames) is ignored rather than guessed at -
+// the ACK's status bytes can masquerade as a plausible distance under
+// the heuristics.
+export function parseBoschStrict(bytes) {
+  const dv = new DataView(new Uint8Array(bytes).buffer);
+  if (bytes.length >= 11 && bytes[0] === 0xc0 && bytes[1] === 0x55 && bytes[2] === 0x10) {
+    const v = dv.getFloat32(7, true);
+    if (isFinite(v) && v >= PLAUSIBLE_MIN && v <= PLAUSIBLE_MAX) return v;
+  }
+  if (bytes.length >= 7 && bytes[0] === 0x00 && bytes[1] === 0x04) {
+    const v = dv.getFloat32(2, true);
+    if (isFinite(v) && v >= PLAUSIBLE_MIN && v <= PLAUSIBLE_MAX) return v;
+  }
+  return null;
+}
+
 export function parseBoschFrame(bytes) {
   const dv = new DataView(new Uint8Array(bytes).buffer);
   if (bytes.length >= 11 && bytes[0] === 0xc0 && bytes[1] === 0x55 && bytes[2] === 0x10) {
@@ -127,15 +145,16 @@ const PROFILES = [
   {
     // Confirmed on a real UniversalDistance 50C: SIG-registered Robert
     // Bosch service 0xFDE8 holding vendor characteristic 02a6c0d2
-    // (write-without-response + notify).
+    // (write-without-response + notify). Strict decoding: this device's
+    // frames are fully known, so nothing gets guessed.
     name: 'Bosch UniversalDistance/AdvancedDistance',
     service: 0xfde8,
-    parse: parseBoschFrame,
+    parse: parseBoschStrict,
   },
   {
     name: 'Bosch (new DIY line)',
     service: '00005301-0000-0041-5253-534f46540000',
-    parse: parseBoschFrame,
+    parse: parseBoschStrict,
   },
   {
     name: 'UART meter',
