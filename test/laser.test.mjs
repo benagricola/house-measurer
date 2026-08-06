@@ -101,6 +101,54 @@ test('reference edge is read from push frames; front edge disables the remote of
   close(metas[0].raw, got[0], 1e-12); // pushes are never corrected
 });
 
+test('mode frames: continuous tracks, area/volume never decode as distances', async () => {
+  const { LaserLink } = await import('../js/laser.js');
+  // Real frames captured from a UniversalDistance 50C cycling its modes.
+  const CONT = [0xc0, 0x55, 0x10, 0x0a, 0x00, 0x6b, 0x00, 0x26, 0xc2, 0xc2, 0x3f,
+    0x70, 0xce, 0xc0, 0x3f, 0x99, 0x99, 0x19, 0x40, 0xda];
+  const AREA = [0xc0, 0x55, 0x10, 0x12, 0x00, 0x6d, 0x00, 0xe9, 0x26, 0x87, 0x40,
+    0x83, 0xc0, 0xde, 0x3f, 0x26, 0x53, 0x1b, 0x40, 0xcc];
+  const AREA_EDGE = [0xc0, 0x55, 0x10, 0x0e, 0x01, 0x6d, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x83, 0xc0, 0xde, 0x3f, 0x00, 0x00, 0x00, 0x00, 0x1e];
+  const VOL = [0xc0, 0x55, 0x10, 0x1e, 0x00, 0x6e, 0x00, 0xf4, 0x3a, 0xa2, 0x40,
+    0x26, 0xc2, 0xb6, 0x3f, 0x00, 0x00, 0x00, 0x00, 0x62];
+  const f = (b, o) => new DataView(new Uint8Array(b).buffer).getFloat32(o, true);
+
+  // None of these carry a survey distance in the primary slot.
+  for (const frame of [CONT, AREA, AREA_EDGE, VOL]) {
+    assert.equal(parseBoschStrict(frame), null);
+    assert.equal(parseBoschFrame(frame), null);
+  }
+
+  const got = [], tracks = [], msgs = [];
+  const ll = new LaserLink({
+    onMeasurement: (m) => got.push(m),
+    onTrack: (cur, mm) => tracks.push({ cur, ...mm }),
+    onStatus: (t) => msgs.push(t),
+  });
+  ll.boschChar = {};
+  // Continuous: [current, min, max] via onTrack, never onMeasurement.
+  ll.handleFrame(new Uint8Array(CONT), { parse: parseBoschStrict });
+  assert.equal(got.length, 0);
+  assert.equal(tracks.length, 1);
+  close(tracks[0].cur, f(CONT, 7), 1e-9);
+  close(tracks[0].min, f(CONT, 11), 1e-9);
+  close(tracks[0].max, f(CONT, 15), 1e-9);
+  assert.equal(ll.deviceRef, 'back', 'reference bits decode on every mode');
+  // The link delivers each frame twice; the duplicate is dropped.
+  ll.handleFrame(new Uint8Array(CONT), { parse: parseBoschStrict });
+  assert.equal(tracks.length, 1, 'double-delivered frame processed once');
+  // Area and volume results are announced, not measured. The captured
+  // values multiply out exactly: 1.7402 x 2.4269 = 4.2235 m2.
+  ll.handleFrame(new Uint8Array(AREA), { parse: parseBoschStrict });
+  assert.ok(msgs.some((t) => /area 4\.223/.test(t)), `area announced (${msgs.at(-1)})`);
+  ll.handleFrame(new Uint8Array(VOL), { parse: parseBoschStrict });
+  assert.ok(msgs.some((t) => /volume 5\.07/.test(t)), 'volume announced');
+  ll.handleFrame(new Uint8Array(AREA_EDGE), { parse: parseBoschStrict });
+  assert.ok(msgs.some((t) => /1\.740 m taken inside/.test(t)), 'in-mode edge reading surfaced');
+  assert.equal(got.length, 0, 'nothing ever reached the measurement path');
+});
+
 test('Bosch strict: only known frames decode; the auto-sync ACK is ignored', () => {
   // The real ACK captured from a UniversalDistance 50C - its status bytes
   // decode to ~22.9 m under the legacy heuristic and must NOT surface.

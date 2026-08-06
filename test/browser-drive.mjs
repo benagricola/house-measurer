@@ -899,6 +899,30 @@ await js(`window.app.laser.cb.onMeasurement(2.527, { kind: 'remote', raw: 2.427 
 assert(await js(`window.app.ui.laserCal`) === null, 'calibration completes');
 assert(Math.abs(await js(`window.app.laser.remoteOffset`) - 0.1) < 1e-9, 'body length derived from push-minus-raw (100 mm)');
 assert(await js(`[...document.querySelectorAll('#toasts .toast')].some(t => /Calibrated: body length 100.0 mm/.test(t.textContent))`), 'calibration announces the measured body length');
+
+// With a meter connected, shoot lives on its own row - big and fully on
+// screen at phone width (it used to fall off the wrapping refbar).
+await js(`window.app.setMode('measure')`);
+await settleFrame();
+{
+  const r = await js(`(() => {
+    const b = document.getElementById('shoot-btn').getBoundingClientRect();
+    return { y: b.y, w: b.width, right: b.right, bottom: b.bottom, iw: innerWidth, ih: innerHeight };
+  })()`);
+  assert(r.w > 120 && r.y > 0 && r.right <= r.iw && r.bottom <= r.ih,
+    `shoot button prominent and fully on screen (${Math.round(r.w)}px wide at ${r.iw}px viewport)`);
+}
+
+// Continuous tracking: samples average into the field, nothing commits.
+const ptsBeforeTrack = (await state()).points.length;
+await js(`window.app.laser.cb.onTrack(1.500, { min: 1.489, max: 2.4 })`);
+await js(`window.app.laser.cb.onTrack(1.504, { min: 1.489, max: 2.4 })`);
+await js(`window.app.laser.cb.onTrack(1.496, { min: 1.489, max: 2.4 })`);
+assert(await js(`window.app.ui.fields[window.app.ui.active]`) === '1.500', 'tracking averages into the active field');
+assert(/average of 3/.test(await js(`document.getElementById('status').textContent`)), 'tracking status counts samples and shows meter min/max');
+assert((await state()).points.length === ptsBeforeTrack, 'tracking commits nothing');
+await js(`clearTimeout(window.app.ui.track?.timer); window.app.ui.track = null; window.app.ui.fields = ['', '']; window.app.render();`);
+
 await js(`(() => { const l = window.app.laser; l.connected = false; l.boschChar = null; l.deviceRef = null; window.app.render(); })()`);
 
 await click('#laser-close');

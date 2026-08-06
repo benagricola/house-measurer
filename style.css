@@ -410,9 +410,21 @@ header button.on, #modebar button.on {
 #stack-btn { padding: 5px 12px; font-size: 13px; color: var(--amber); border-color: var(--amber); font-weight: 700; }
 #del-point { padding: 5px 12px; font-size: 13px; color: var(--red); border-color: var(--red); }
 #unwall-btn { padding: 5px 12px; font-size: 13px; color: var(--ink); }
-#pause-btn, #auto-btn { padding: 5px 12px; font-size: 13px; color: var(--muted); }
-#shoot-btn { padding: 5px 14px; font-size: 13px; font-weight: 700; color: var(--teal); border-color: var(--teal); }
-#pause-btn.on, #auto-btn.on { color: var(--teal); border-color: var(--teal); font-weight: 700; }
+#pause-btn { padding: 5px 12px; font-size: 13px; color: var(--muted); }
+#pause-btn.on { color: var(--teal); border-color: var(--teal); font-weight: 700; }
+/* Laser controls get their own full-width row: shoot is the primary
+   action when a meter is connected and must never fall off-screen. */
+#laserbar { display: flex; gap: 8px; }
+#laserbar button {
+  border: 1px solid var(--line);
+  background: var(--card);
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-size: 13px;
+  color: var(--muted);
+}
+#auto-btn.on { color: var(--teal); border-color: var(--teal); font-weight: 700; }
+#shoot-btn { flex: 1; color: var(--teal); border-color: var(--teal); font-weight: 700; font-size: 14px; }
 #floor-btn {
   flex: 0 0 auto !important;
   color: #fff !important;
@@ -635,6 +647,8 @@ header button.on, #modebar button.on {
    and everything else slims down so one row still fits a 360px phone. */
 @media (max-width: 540px) {
   #title { display: none; }
+  .refslot { padding: 4px 9px; min-width: 48px; font-size: 13px; }
+  #refbar button { padding: 6px 9px; font-size: 12px; }
   header { gap: 4px; padding-left: max(8px, env(safe-area-inset-left)); padding-right: max(8px, env(safe-area-inset-right)); }
   header button { padding: 7px 8px; font-size: 12.5px; min-width: 34px; }
   #gap-pill { font-size: 11px; padding: 4px 7px; }

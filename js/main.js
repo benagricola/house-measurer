@@ -1220,11 +1220,13 @@ function renderPanel() {
     $('pause-btn').style.display = ui.mode === 'measure' && !ui.flow && autoWalling ? '' : 'none';
     $('pause-btn').textContent = ui.wallPause ? 'walling: off' : 'walling: on';
     $('pause-btn').classList.toggle('on', !ui.wallPause);
-    $('auto-btn').style.display = laser.connected && ui.mode === 'measure' && !ui.flow ? '' : 'none';
-    $('auto-btn').textContent = `auto: ${ui.autoLaser === true ? 'on' : 'off'}`;
-    $('auto-btn').classList.toggle('on', ui.autoLaser === true);
-    $('shoot-btn').style.display = laser.canTrigger ? '' : 'none';
   }
+  // Laser controls live on their own row so shoot never falls off a
+  // small screen behind the wrapping refbar.
+  $('laserbar').style.display = laser.connected && ui.mode === 'measure' && !ui.flow ? '' : 'none';
+  $('auto-btn').textContent = `auto: ${ui.autoLaser === true ? 'on' : 'off'}`;
+  $('auto-btn').classList.toggle('on', ui.autoLaser === true);
+  $('shoot-btn').style.display = laser.canTrigger ? '' : 'none';
   // "close room" appears while a wall run with 3+ points is waiting.
   const open = store.openWall();
   const closable = !ui.flow && open && open.pts.length >= 3;
@@ -1885,6 +1887,33 @@ const buzz = (p) => {
 };
 
 const laser = new LaserLink({
+
+  // Continuous mode streams [current, min, max] several times a second.
+  // Hand-held that mostly measures hand shake, so the active field gets
+  // a rolling average; a big jump or a pause starts a fresh window
+  // (re-aimed at something else). Nothing commits - the settled value
+  // sits in the field for OK, and auto mode ignores the stream.
+  onTrack: (cur, { min, max }) => {
+    const t = ui.track || (ui.track = { samples: [] });
+    const now = Date.now();
+    if (t.at && (now - t.at > 1500 || Math.abs(cur - t.last) > 0.05)) t.samples = [];
+    t.at = now;
+    t.last = cur;
+    t.samples.push(cur);
+    if (t.samples.length > 24) t.samples.shift();
+    const n = t.samples.length;
+    const avg = t.samples.reduce((a, b) => a + b, 0) / n;
+    const spread = (Math.max(...t.samples) - Math.min(...t.samples)) * 1000;
+    const txt = avg.toFixed(3);
+    ui.fields[ui.active] = txt;
+    const mm = (v) => (isFinite(v) ? v.toFixed(3) : '?');
+    clearTimeout(t.timer);
+    t.timer = setTimeout(() => {
+      ui.track = null;
+      say(`Tracking ended: ${txt} m in the field (average of ${n}, spread ${spread.toFixed(0)} mm). Meter min ${mm(min)} / max ${mm(max)}.`, 'good');
+    }, 1400);
+    say(`Tracking: ${txt} m - average of ${n}, spread ${spread.toFixed(0)} mm (meter min ${mm(min)} / max ${mm(max)})`);
+  },
 
   onMeasurement: (m, meta = {}) => {
     buzz(25);

@@ -102,8 +102,12 @@ export const BOSCH_READ_SETTINGS = [0xc0, 0x53, 0x00, 0xd8];
 // the heuristics.
 export function parseBoschStrict(bytes) {
   const dv = new DataView(new Uint8Array(bytes).buffer);
-  // Push indication after auto-sync (measure button): float32 LE metres.
+  // Push indication after auto-sync: float32 LE at 7..10 - but ONLY for
+  // single-distance results. Byte 3 is (type << 2) | referenceEdge, and
+  // the primary float of other types is an area (m2), a volume (m3) or
+  // a live tracking sample, none of which may masquerade as a distance.
   if (bytes.length >= 11 && bytes[0] === 0xc0 && bytes[1] === 0x55 && bytes[2] === 0x10) {
+    if ((bytes[3] >> 2) !== 1 || (bytes[4] & 1)) return null;
     const v = dv.getFloat32(7, true);
     if (isFinite(v) && v >= PLAUSIBLE_MIN && v <= PLAUSIBLE_MAX) return v;
   }
@@ -119,6 +123,7 @@ export function parseBoschStrict(bytes) {
 export function parseBoschFrame(bytes) {
   const dv = new DataView(new Uint8Array(bytes).buffer);
   if (bytes.length >= 11 && bytes[0] === 0xc0 && bytes[1] === 0x55 && bytes[2] === 0x10) {
+    if ((bytes[3] >> 2) !== 1 || (bytes[4] & 1)) return null;
     const v = dv.getFloat32(7, true);
     if (isFinite(v) && v >= PLAUSIBLE_MIN && v <= PLAUSIBLE_MAX) return v;
   }
@@ -392,22 +397,59 @@ export class LaserLink {
   handleFrame(bytes, profile, tag = '') {
     const hex = (tag ? tag + ': ' : '')
       + [...bytes].map((b) => b.toString(16).padStart(2, '0')).join(' ');
+    // The link delivers every frame twice (double notification); one
+    // copy is enough for the log and for processing.
+    const now0 = Date.now();
+    if (hex === this._lastHex && now0 - this._lastHexAt < 700) return;
+    this._lastHex = hex;
+    this._lastHexAt = now0;
     this.rawLog.push(hex);
     if (this.rawLog.length > 24) this.rawLog.shift();
     this.cb.onRaw?.(hex);
     const isPush = bytes[0] === 0xc0 && bytes[1] === 0x55 && bytes[2] === 0x10 && bytes.length >= 11;
     const isRemote = bytes[0] === 0x00 && bytes[1] === 0x04;
-    // Push frames broadcast the meter's reference-edge setting in byte 3
-    // (payload byte 0): 0x06 = back edge, 0x04 = front edge - confirmed
-    // by flipping the setting on a real UniversalDistance 50C and
-    // diffing the frames. Byte 5 is a rolling sequence counter.
+    // Push frame byte 3 = (measurement type << 2) | reference edge, and
+    // byte 4 bit 0 marks a partial frame (primary slot empty). Confirmed
+    // live on a UniversalDistance 50C by cycling every mode:
+    //   ref: 0 = front edge, 2 = back edge (default)
+    //   type 1 = single distance                [d, -, -]
+    //   type 2 = continuous tracking            [current, min, max]
+    //   type 3 = area edge (partial)            [-, edge, -]
+    //   type 4 = area result                    [m2, len1, len2]
+    //   type 5/6 = volume edges (partial)       [-, edge, -]
+    //   type 7 = volume result                  [m3, last edge, -]
+    // Byte 5 is a rolling sequence counter.
     if (isPush) {
-      const ref = bytes[3] === 0x04 ? 'front' : bytes[3] === 0x06 ? 'back'
+      const refBits = bytes[3] & 3;
+      const type = bytes[3] >> 2;
+      const partial = (bytes[4] & 1) === 1;
+      const ref = refBits === 0 ? 'front' : refBits === 2 ? 'back'
         : `0x${bytes[3].toString(16)}`;
       if (this.deviceRef && this.deviceRef !== ref) {
         this.status(`Meter reference edge is now ${ref === 'front' ? 'FRONT' : ref} - remote-shoot correction ${ref === 'front' ? 'off' : 'on'}`, 'warn');
       }
       this.deviceRef = ref;
+      const dv = new DataView(new Uint8Array(bytes).buffer);
+      const f32 = (o) => (bytes.length >= o + 4 ? dv.getFloat32(o, true) : NaN);
+      const plaus = (v) => isFinite(v) && v >= PLAUSIBLE_MIN && v <= PLAUSIBLE_MAX;
+      if (type === 2) {
+        const cur = f32(7);
+        if (plaus(cur)) this.cb.onTrack?.(cur, { min: f32(11), max: f32(15) });
+        return;
+      }
+      if (type === 4 && !partial) {
+        this.status(`Meter: area ${f32(7).toFixed(3)} m2 (${f32(11).toFixed(3)} x ${f32(15).toFixed(3)} m) - not a distance, ignored`, '');
+        return;
+      }
+      if (type === 7 && !partial) {
+        this.status(`Meter: volume ${f32(7).toFixed(3)} m3 (last edge ${f32(11).toFixed(3)} m) - not a distance, ignored`, '');
+        return;
+      }
+      if ((type === 3 || type === 5 || type === 6) && partial) {
+        const edge = f32(11);
+        if (plaus(edge)) this.status(`Meter: ${edge.toFixed(3)} m taken inside area/volume mode (result stays on the meter)`, '');
+        return;
+      }
     }
     let v = profile.parse(bytes);
     if (v == null) return;

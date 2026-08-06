@@ -63,8 +63,10 @@
         <button id="del-point" style="display:none" title="delete the selected point">delete</button>
         <button id="unwall-btn" style="display:none" title="take this point out of the wall outline (it stays as a reference)">unwall</button>
         <button id="pause-btn" style="display:none" title="pause wall auto-chaining to place reference-only points"></button>
-        <button id="auto-btn" style="display:none" title="laser auto mode: readings advance and commit points by themselves"></button>
-        <button id="shoot-btn" style="display:none" title="trigger a shake-free measurement from here (arms the laser, then fires)">shoot</button>
+      </div>
+      <div id="laserbar" style="display:none">
+        <button id="auto-btn" title="laser auto mode: readings advance and commit points by themselves"></button>
+        <button id="shoot-btn" title="trigger a shake-free measurement from here (arms the laser, then fires)">shoot</button>
       </div>
       <div id="fields">
         <div class="field" id="field0"><label></label><div class="val"></div><div class="interp"></div></div>
@@ -183,7 +185,8 @@
     <p>Drag to pan, pinch or scroll to zoom, double-tap empty plan to zoom in one-handed. Keyboard: digits, Enter = OK, Tab = other field, f = flip, Escape = cancel, ctrl+z undo.</p>
     <h2>bluetooth laser</h2>
     <p>Tap <b>laser</b> in the header to open the laser panel, then <b>connect</b> (Chrome, and the app must be on its https:// address or localhost). Each reading lands in the active field ready for OK. The panel also holds the remote-shoot offset and a log of recent protocol frames (copyable) so unknown meters can be given a decoder.</p>
-    <p><b>Auto mode</b> (the <b>auto</b> toggle next to the reference slots, off by default): each laser reading advances the survey by itself. The number of selected references is the contract: with 2 selected, every pair of readings places a point; with 3 or 4 selected, every point takes that many readings and commits on the last one - then the next point begins automatically against the same references. The status line always names which reference to shoot next, and the phone buzzes: short tick = reading logged, triple = point placed, long = reading refused. A mis-fired shot is retracted with <b>del</b> (steps back one reading); Escape restarts the current fix. Every guard still applies: impossible pairs are refused with an explanation, flip swaps a wrong side, and undo unwinds anything.</p>
+    <p><b>Meter modes</b>: the meter's continuous mode streams into the app - the active field holds a rolling average (hand shake cancels out; re-aiming or pausing starts a fresh window), and the status line shows the sample count plus the meter's own min/max. Nothing commits until you press OK. Area and volume results are announced in the status line but never treated as distances.</p>
+    <p><b>Auto mode</b> (the <b>auto</b> toggle in the laser row, off by default): each laser reading advances the survey by itself. The number of selected references is the contract: with 2 selected, every pair of readings places a point; with 3 or 4 selected, every point takes that many readings and commits on the last one - then the next point begins automatically against the same references. The status line always names which reference to shoot next, and the phone buzzes: short tick = reading logged, triple = point placed, long = reading refused. A mis-fired shot is retracted with <b>del</b> (steps back one reading); Escape restarts the current fix. Every guard still applies: impossible pairs are refused with an explanation, flip swaps a wrong side, and undo unwinds anything.</p>
     <p>The <b>shoot</b> button (Bosch meters) triggers a measurement remotely - the laser arms, then fires, with no button press to shake the aim. Remote readings measure from the device's FRONT edge, so a corrective offset (the body length, default 10 cm, adjustable in the laser panel) is added to match your usual back-edge readings. The device screen stays at 0 for remote shots - compare values in the app field instead. If the meter declines, the status says so. The <b>calibrate</b> button in the laser panel derives the offset from the meter itself: prop it still, press its measure button once, and the app fires a remote shot and reads the body length off the difference.</p>
     <p class="fine">Everything is saved on this device automatically. Export JSON from the log sheet for backup or to move devices.</p>
     <button id="coach-show">show guided tips again</button>
