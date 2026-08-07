@@ -452,7 +452,7 @@ header button.on, #modebar button.on {
 #item-new { width: 100%; padding: 12px 0; font-weight: 600; }
 
 /* ---- sheets (log, item form) ---- */
-#log-sheet, #item-form, #laser-sheet {
+#log-sheet, #item-form, #laser-sheet, #doctor-sheet {
   position: fixed;
   inset: 0;
   background: var(--scrim);
@@ -463,8 +463,8 @@ header button.on, #modebar button.on {
   z-index: 10;
 }
 #item-form { align-items: flex-end; padding: 0; }
-#log-sheet[hidden], #item-form[hidden], #laser-sheet[hidden] { display: none; }
-#log-card, #item-card, #laser-card {
+#log-sheet[hidden], #item-form[hidden], #laser-sheet[hidden], #doctor-sheet[hidden] { display: none; }
+#log-card, #item-card, #laser-card, #doctor-card {
   position: relative;
   background: var(--bg);
   border-radius: 14px;
@@ -477,14 +477,14 @@ header button.on, #modebar button.on {
   -webkit-user-select: text;
 }
 #item-card { border-radius: 14px 14px 0 0; width: min(560px, 100vw); }
-#log-card h2, #item-card h2, #laser-card h2 {
+#log-card h2, #item-card h2, #laser-card h2, #doctor-card h2 {
   font-size: 13px;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--muted);
   margin-bottom: 8px;
 }
-#log-close, #if-close, #laser-close {
+#log-close, #if-close, #laser-close, #doctor-close {
   position: absolute;
   top: 10px;
   right: 10px;
@@ -793,3 +793,33 @@ header button.on, #modebar button.on {
   border-radius: 10px;
   font-size: 14px;
 }
+
+/* ---- survey check ---- */
+#health-pill {
+  font-size: 13px;
+  padding: 5px 10px;
+  border-radius: 99px;
+  border: none;
+  color: #fff;
+  white-space: nowrap;
+  min-width: 0;
+}
+#health-pill.warn { background: var(--amber); }
+#health-pill.err { background: var(--red); }
+.doc-card {
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--muted);
+  border-radius: 10px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+  font-size: 13.5px;
+  line-height: 1.45;
+}
+.doc-card.err { border-left-color: var(--red); }
+.doc-card.warn { border-left-color: var(--amber); }
+.doc-card.info { border-left-color: var(--green); }
+.doc-card b { font-size: 14px; }
+.doc-card p { margin: 4px 0 2px; color: var(--muted); }
+.doc-card ol { padding-left: 20px; margin-top: 4px; }
+.doc-card li { margin-bottom: 3px; }
+.doc-card .row button { color: var(--teal); border-color: var(--teal); font-weight: 700; }

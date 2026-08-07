@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   parseDistance, fmtDist, circleIntersect, solve, pointName, CLAMP_TOL,
+  segIntersects, weakDir,
 } from '../js/geometry.js';
 import { Store } from '../js/state.js';
 
@@ -175,4 +176,29 @@ test('store: ids stay unique across undo + new commits', () => {
   st.undo();
   const c2 = st.addPoint(a, b, 2, 3, 1);
   assert.notEqual(c1, c2);
+});
+
+test('segIntersects: crossings yes, shared endpoints and disjoint no', () => {
+  const P = (x, y) => ({ x, y });
+  assert.ok(segIntersects(P(0, 0), P(2, 2), P(0, 2), P(2, 0)), 'X crossing');
+  assert.ok(!segIntersects(P(0, 0), P(1, 0), P(0, 1), P(1, 1)), 'parallel apart');
+  assert.ok(!segIntersects(P(0, 0), P(2, 2), P(2, 2), P(4, 0)), 'shared endpoint is not occlusion');
+  assert.ok(!segIntersects(P(0, 0), P(1, 1), P(3, 0), P(4, 2)), 'disjoint no');
+  // A wall passing just in front of the target blocks the ray.
+  assert.ok(segIntersects(P(0, 0), P(4, 0), P(2, -1), P(2, 1)), 'wall across the ray');
+});
+
+test('weakDir: shallow rays weak across them, right angles perfectly conditioned', () => {
+  const P = (x, y) => ({ x, y });
+  // Rays from (0,0) to refs almost behind each other (5 degrees apart):
+  // the weak axis is near-perpendicular to the mean ray, conditioning bad.
+  const w1 = weakDir(P(0, 0), P(-3, -0.1), P(-3, 0.1));
+  assert.ok(Math.abs(w1.x) < 0.1 && Math.abs(w1.y) > 0.99, `weak axis perpendicular (${w1.x.toFixed(2)}, ${w1.y.toFixed(2)})`);
+  assert.ok(w1.cond < 0.05, `shallow rays badly conditioned (${w1.cond.toFixed(3)})`);
+  // Right-angle rays: conditioning is perfect.
+  const w2 = weakDir(P(0, 0), P(-3, 0), P(0, -3));
+  assert.ok(w2.cond > 0.99, `right angle ideal (${w2.cond.toFixed(3)})`);
+  // 150-degree rays: weak along the bisector's normal, mediocre cond.
+  const w3 = weakDir(P(0, 0), P(-3, 0), P(3 * Math.cos(Math.PI / 6), 3 * Math.sin(Math.PI / 6)));
+  assert.ok(w3.cond > 0.05 && w3.cond < 0.3, `150 degrees mediocre (${w3.cond.toFixed(3)})`);
 });

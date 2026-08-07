@@ -15,6 +15,7 @@
   <header>
     <div id="title">house measurer</div>
     <div id="gap-pill" hidden></div>
+    <button id="health-pill" hidden title="the survey check found something - tap for diagnosis and fixes"></button>
     <button id="laser-btn" title="Bluetooth laser measure: connection, remote shoot, settings">laser</button>
     <button id="view3d-btn" title="toggle 3D view">3D</button>
     <button id="log-btn" title="measurements, walls, rooms, layers, export/import">data</button>
@@ -106,6 +107,14 @@
   </div>
 </div>
 
+<div id="doctor-sheet" hidden>
+  <div id="doctor-card">
+    <button id="doctor-close">x</button>
+    <h2>survey check</h2>
+    <div id="doctor-list"></div>
+  </div>
+</div>
+
 <div id="laser-sheet" hidden>
   <div id="laser-card">
     <button id="laser-close">x</button>
@@ -176,6 +185,7 @@
       <li>New points are <b>reference-only</b> by default (walling: off). Fix reference points around the space first - especially ones that can see what A and B cannot (through doorways, past corners) - then build each room in <b>walls</b> mode: tap the corners in order, tap the first again to close, and give the ceiling height.</li>
       <li>Prefer chaining instead? Toggle <b>walling: on</b> and each new point links into the wall outline as you measure, until the room closes (turning it on before any outline exists starts the run at A-B). Fix a wrong link in walls mode with step back; if a reference point slipped into the outline, select it and press <b>unwall</b> - the loop reroutes past it and the point stays usable.</li>
       <li>Placed a point on the wrong side and only noticed later? Tap it so it is the only selected point and press <b>flip</b> - it mirrors to the other candidate and everything measured from it re-solves. If those dependents landed mirrored as well, press flip a second time and they mirror too.</li>
+      <li>The <b>survey check</b> (the amber/red pill in the header when something needs attention, or the button in the data sheet) diagnoses problems in plain words - unsolved points, disagreeing measurements, weak fix angles - and lists the exact steps to fix each, including which existing point to shoot from for the strongest improvement.</li>
       <li>Extra check measurements (e.g. a room diagonal): select the 2 points, type the distance, press record. Every point is adjusted to best fit all measurements; disagreement shows as residuals, and a reading far off the current solution is challenged before it is accepted. Edit or delete any measurement in the data sheet. The <b>detail</b> button overlays the interior angle at every wall corner and, for a selected point, the circles it was fixed from; while typing a new point the proposed wall's corner angle previews live.</li>
     </ol>
     <h2>walls, items, 3D</h2>

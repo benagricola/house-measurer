@@ -4,6 +4,7 @@
 import {
   parseDistance, fmtDist, circleIntersect, CLAMP_TOL, pointName,
   pointSegDist, itemCorners, pointInItem, angleDeg, interiorAngles,
+  segIntersects, weakDir,
 } from './geometry.js';
 import { Store } from './state.js';
 import { PlanView } from './plan.js';
@@ -199,7 +200,170 @@ function sideMismatches() {
   return out;
 }
 
+// --- survey check (the built-in "what is wrong and what do I do") ----------
+
+// Is the straight line between two solved positions crossed by any wall
+// segment on this floor? Walls touching either endpoint do not count.
+function sightBlocked(a, b, floorId) {
+  for (const wall of store.state.walls) {
+    if (wall.floor !== floorId) continue;
+    const run = wall.closed ? [...wall.pts, wall.pts[0]] : wall.pts;
+    for (let i = 0; i + 1 < run.length; i++) {
+      const p = pos(run[i]), q = pos(run[i + 1]);
+      if (p && q && segIntersects(a, b, p, q)) return true;
+    }
+  }
+  return false;
+}
+
+// Does the ray from a wall point toward a target run nearly parallel to
+// a wall attached to that point? Such a shot reads the wall face, not
+// the mark (the grazing failure seen on a real survey).
+function sightGrazes(ptId, from, to) {
+  const dir = { x: to.x - from.x, y: to.y - from.y };
+  const dl = Math.hypot(dir.x, dir.y) || 1;
+  for (const wall of store.state.walls) {
+    const run = wall.closed ? [...wall.pts, wall.pts[0]] : wall.pts;
+    for (let i = 0; i + 1 < run.length; i++) {
+      if (run[i] !== ptId && run[i + 1] !== ptId) continue;
+      const p = pos(run[i]), q = pos(run[i + 1]);
+      if (!p || !q) continue;
+      const wl = Math.hypot(q.x - p.x, q.y - p.y) || 1;
+      const cosang = Math.abs((dir.x * (q.x - p.x) + dir.y * (q.y - p.y)) / (dl * wl));
+      if (cosang > 0.966) return true; // within ~15 degrees of the wall
+    }
+  }
+  return false;
+}
+
+// Best additional references for strengthening a point's fix: aligned
+// with the fix's weak axis, clear of walls, not grazing along a wall at
+// either end. Returns up to three {pt, score, d}.
+function strengthenCandidates(pt) {
+  const p = pos(pt.id);
+  const f = pt.fix;
+  if (!p || !f || f.stack != null) return [];
+  const P = pos(f.r1), Q = pos(f.r2);
+  if (!P || !Q) return [];
+  const w = weakDir(p, P, Q);
+  const out = [];
+  for (const c of store.state.points) {
+    if (c.id === pt.id || c.id === f.r1 || c.id === f.r2 || c.floor !== pt.floor) continue;
+    const q = pos(c.id);
+    if (!q) continue;
+    const d = Math.hypot(q.x - p.x, q.y - p.y);
+    if (d < 0.4 || d > 15) continue;
+    const u = { x: (q.x - p.x) / d, y: (q.y - p.y) / d };
+    const score = Math.abs(u.x * w.x + u.y * w.y);
+    if (score < 0.45) continue;
+    if (sightBlocked(p, q, pt.floor)) continue;
+    if (sightGrazes(pt.id, p, q) || sightGrazes(c.id, q, p)) continue;
+    out.push({ pt: c, score, d });
+  }
+  return out.sort((a, b) => b.score - a.score).slice(0, 3);
+}
+
+// All current diagnoses, worst first. Each: { sev: 'err'|'warn'|'info',
+// title, body, steps: [], selectIds?: [pointIds to select on tap] }.
+function surveyIssues() {
+  const issues = [];
+  const errs = store.solved.errors ?? new Map();
+
+  // Unsolved points: root causes get the full prescription; points that
+  // are merely downstream get grouped under their root.
+  const waiting = [];
+  for (const u of unsolvedPoints(false)) {
+    if (u.reason === 'reference not solved') { waiting.push(u.pt); continue; }
+    const f = u.pt.fix;
+    const fixMeas = f && f.stack == null
+      ? store.state.measurements.filter((m) =>
+        (m.p === u.pt.id || m.q === u.pt.id) &&
+        [f.r1, f.r2].includes(m.p === u.pt.id ? m.q : m.p))
+      : [];
+    const vals = fixMeas.map((m) => {
+      const other = m.p === u.pt.id ? m.q : m.p;
+      return `${store.point(other)?.name} ${fmtDist(m.d)}`;
+    }).join(' and ');
+    issues.push({
+      sev: 'err',
+      title: `${u.pt.name} cannot be placed`,
+      body: `${u.reason}. Its fix distances are ${vals || 'missing'} - at least one is wrong (a mis-read, a cm/m mix-up, or a shot that hit the wrong thing).`,
+      steps: [
+        'Re-measure the suspect distance in the room.',
+        'Open data - measurements: edit the wrong value (the rows for this point are marked "unsolved").',
+        `Or delete ${u.pt.name} in data - unsolved points, and fix it again from references with clean sight lines.`,
+      ],
+    });
+  }
+  if (waiting.length) {
+    issues.push({
+      sev: 'warn',
+      title: `${waiting.map((p) => p.name).join(', ')} waiting on a broken point`,
+      body: 'These points are measured from an unsolved point. They come back by themselves the moment the point above them is repaired - fix the red entry first.',
+      steps: [],
+    });
+  }
+
+  for (const pt of sideMismatches()) {
+    issues.push({
+      sev: 'warn',
+      title: `${pt.name}: side flag contradicts its solution`,
+      body: 'The adjustment rescued this point onto its true side, but the stored flag still says the mirror. New points measured from it can fail to place until it is healed.',
+      steps: [`Tap ${pt.name} so it is the only selected point, press flip once. It will not move - the flag heals.`],
+      selectIds: [pt.id],
+    });
+  }
+
+  // Measurements that fight the rest of the network.
+  const badMeas = [...(store.solved.mres ?? new Map()).entries()]
+    .filter(([, r]) => Math.abs(r) >= 0.03)
+    .sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]))
+    .slice(0, 3);
+  for (const [mid, r] of badMeas) {
+    const m = store.state.measurements.find((x) => x.id === mid);
+    if (!m) continue;
+    const a = store.point(m.p)?.name, b = store.point(m.q)?.name;
+    issues.push({
+      sev: 'warn',
+      title: `${a} to ${b} disagrees by ${(Math.abs(r) * 100).toFixed(1)} cm`,
+      body: `The recorded ${fmtDist(m.d)} conflicts with everything else, so nearby points are compromised toward it. Common causes: slant between marks at different heights, a graze along a wall, the wrong mark.`,
+      steps: [
+        `Re-measure ${a} to ${b} level and square.`,
+        'Edit the value in data - measurements (or delete it if it was a bad shot).',
+      ],
+    });
+  }
+
+  // Weak fix geometry, with concrete strengthening candidates.
+  for (const pt of store.state.points) {
+    const f = pt.fix;
+    if (!f || f.stack != null) continue;
+    const p = pos(pt.id), P = pos(f.r1), Q = pos(f.r2);
+    if (!p || !P || !Q) continue;
+    const ang = angleDeg(P, p, Q);
+    if (ang >= 30 && ang <= 150) continue;
+    const cands = strengthenCandidates(pt);
+    const candTxt = cands.length
+      ? `Best extra references: ${cands.map((c) => `${c.pt.name} (~${fmtDist(c.d)})`).join(', ')} - chosen for a strong angle with clear sight lines.`
+      : 'No existing point offers a good angle - place a new reference first.';
+    issues.push({
+      sev: 'warn',
+      title: `${pt.name}: weak fix geometry (rays cross at ${Math.round(ang)}°)`,
+      body: `Millimetres of laser noise become centimetres of position error at this angle, with no residual to show for it. ${candTxt}`,
+      steps: cands.length ? [
+        `Measure ${pt.name} to ${cands[0].pt.name} (about ${fmtDist(cands[0].d)}).`,
+        'Tap the button below (it selects the pair), type the distance, press record.',
+      ] : [],
+      selectIds: cands.length ? [pt.id, cands[0].pt.id] : [pt.id],
+    });
+  }
+
+  return issues;
+}
+
 function visibleLayers() {
+
+
   return new Set(store.state.layers.filter((l) => l.visible).map((l) => l.id));
 }
 
@@ -965,6 +1129,55 @@ function applyItemForm(placement) {
   }
 }
 
+// --- survey check sheet ------------------------------------------------------
+
+function renderDoctor() {
+  const list = $('doctor-list');
+  list.innerHTML = '';
+  const issues = surveyIssues();
+  if (!issues.length) {
+    list.innerHTML = '<div class="doc-card info"><b>No problems found</b>' +
+      '<p>Every point solves, no side flags disagree, residuals are inside 3 cm and no fix has a dangerously shallow angle. ' +
+      'Recorded diagonals are still the cheapest insurance - select two points, type the taped or shot distance, press record.</p></div>';
+    return;
+  }
+  for (const iss of issues) {
+    const card = document.createElement('div');
+    card.className = 'doc-card ' + iss.sev;
+    card.innerHTML = `<b>${iss.title}</b><p>${iss.body}</p>` +
+      (iss.steps.length ? `<ol>${iss.steps.map((t) => `<li>${t}</li>`).join('')}</ol>` : '');
+    if (iss.selectIds?.length) {
+      const btn = document.createElement('button');
+      btn.textContent = iss.selectIds.length > 1
+        ? `select ${iss.selectIds.map((id) => store.point(id)?.name).join(' + ')}`
+        : `select ${store.point(iss.selectIds[0])?.name}`;
+      btn.addEventListener('click', () => {
+        ui.refs = iss.selectIds.filter((id) => store.point(id) && pos(id));
+        ui.mode = 'measure';
+        ui.flow = null;
+        $('doctor-sheet').hidden = true;
+        say(iss.selectIds.length > 1
+          ? 'Pair selected - type the measured distance, then press record'
+          : 'Point selected - press flip to heal it, or delete if it is wrong');
+      });
+      const row = document.createElement('div');
+      row.className = 'row';
+      row.appendChild(btn);
+      card.appendChild(row);
+    }
+    list.appendChild(card);
+  }
+}
+
+$('health-pill').addEventListener('click', () => {
+  $('doctor-sheet').hidden = false;
+  renderDoctor();
+});
+$('doctor-close').addEventListener('click', () => { $('doctor-sheet').hidden = true; });
+$('doctor-sheet').addEventListener('click', (e) => {
+  if (e.target === $('doctor-sheet')) $('doctor-sheet').hidden = true;
+});
+
 // --- log sheet -------------------------------------------------------------
 
 function renderLog() {
@@ -1205,10 +1418,16 @@ function renderLog() {
 
   section('data');
   const dRow = addRow(
+    `<button data-act="doctor">survey check</button>` +
     `<button data-act="export">download JSON</button>` +
     `<button data-act="copy">copy JSON</button>` +
     `<button data-act="import">import...</button>`
   );
+  dRow.querySelector('[data-act="doctor"]').addEventListener('click', () => {
+    $('log-sheet').hidden = true;
+    $('doctor-sheet').hidden = false;
+    renderDoctor();
+  });
   dRow.querySelector('[data-act="export"]').addEventListener('click', exportJSON);
   dRow.querySelector('[data-act="copy"]').addEventListener('click', async () => {
     try {
@@ -1445,6 +1664,15 @@ function renderPanel() {
   $('undo').disabled = !store.canUndo;
   $('redo').disabled = !store.canRedo;
   $('view3d-btn').classList.toggle('on', ui.view === '3d');
+
+  // Survey-check pill: appears only when the doctor has something to say.
+  const nIssues = surveyIssues().filter((i) => i.sev !== 'info');
+  const hp = $('health-pill');
+  hp.hidden = nIssues.length === 0;
+  if (nIssues.length) {
+    hp.textContent = `check: ${nIssues.length}`;
+    hp.className = nIssues.some((i) => i.sev === 'err') ? 'err' : 'warn';
+  }
 
   // Residual pill: worst residual of the last placed point.
   const pill = $('gap-pill');
@@ -1956,6 +2184,7 @@ function render() {
     renderPlan();
   }
   if (!$('log-sheet').hidden) renderLog();
+  if (!$('doctor-sheet').hidden) renderDoctor();
 }
 
 // --- boot ------------------------------------------------------------------

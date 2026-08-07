@@ -300,3 +300,41 @@ export function pointName(i) {
   } while (n >= 0);
   return s;
 }
+
+// --- survey-doctor geometry -------------------------------------------------
+
+// Do segments a1-a2 and b1-b2 properly intersect? Touching at a shared
+// endpoint (within eps) does not count - a wall meeting a point is not
+// an occlusion of that point.
+export function segIntersects(a1, a2, b1, b2, eps = 0.01) {
+  const near = (p, q) => Math.hypot(p.x - q.x, p.y - q.y) < eps;
+  if (near(a1, b1) || near(a1, b2) || near(a2, b1) || near(a2, b2)) return false;
+  const cross = (o, p, q) => (p.x - o.x) * (q.y - o.y) - (p.y - o.y) * (q.x - o.x);
+  const d1 = cross(b1, b2, a1), d2 = cross(b1, b2, a2);
+  const d3 = cross(a1, a2, b1), d4 = cross(a1, a2, b2);
+  return ((d1 > 0) !== (d2 > 0)) && ((d3 > 0) !== (d4 > 0));
+}
+
+// The direction in which a two-distance fix at p (from references a, b)
+// is LEAST constrained, with a conditioning score. Each distance pins p
+// along its own ray; the weak axis is the smallest eigenvector of the
+// summed constraint directions. cond is lambda_min/lambda_max in 0..1:
+// 1 = rays at right angles (ideal), near 0 = rays almost parallel.
+export function weakDir(p, a, b) {
+  const un = (q) => {
+    const dx = p.x - q.x, dy = p.y - q.y, l = Math.hypot(dx, dy) || 1;
+    return { x: dx / l, y: dy / l };
+  };
+  const u1 = un(a), u2 = un(b);
+  const m11 = u1.x * u1.x + u2.x * u2.x;
+  const m12 = u1.x * u1.y + u2.x * u2.y;
+  const m22 = u1.y * u1.y + u2.y * u2.y;
+  const tr = m11 + m22, det = m11 * m22 - m12 * m12;
+  const disc = Math.sqrt(Math.max(0, tr * tr / 4 - det));
+  const lmin = tr / 2 - disc, lmax = tr / 2 + disc;
+  let vx = m12, vy = lmin - m11;
+  if (Math.hypot(vx, vy) < 1e-9) { vx = lmin - m22; vy = m12; }
+  const l = Math.hypot(vx, vy);
+  if (l < 1e-9) return { x: 1, y: 0, cond: 1 }; // perfectly conditioned
+  return { x: vx / l, y: vy / l, cond: lmax > 1e-9 ? lmin / lmax : 0 };
+}

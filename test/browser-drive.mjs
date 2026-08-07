@@ -437,6 +437,19 @@ await js(`window.app.ui.message = null; window.app.ui.refs = []; window.app.rend
   const stat = await js(`document.getElementById('status').textContent`);
   assert(/cannot be placed/.test(stat) && /C/.test(stat), `status names the unsolved points (${stat.slice(0, 60)})`);
 }
+// The survey check spells out the diagnosis and the recovery steps.
+assert(await js(`!document.getElementById('health-pill').hidden`), 'health pill appears for a broken survey');
+assert(/err/.test(await js(`document.getElementById('health-pill').className`)), 'health pill red for an unsolved point');
+await click('#health-pill');
+{
+  const doc = await js(`document.getElementById('doctor-list').innerText`);
+  assert(/cannot be placed/.test(doc) && /circles miss/.test(doc), 'doctor names the unsolved point and reason');
+  assert(/waiting on a broken point/.test(doc), 'downstream points grouped as waiting');
+  assert(/Re-measure/.test(doc), 'doctor gives concrete recovery steps');
+}
+await click('#doctor-close');
+assert(await js(`document.getElementById('doctor-sheet').hidden`), 'doctor closes');
+
 await click('#log-btn');
 {
   const logTxt = await js(`document.getElementById('log-list').innerText`);
@@ -450,6 +463,13 @@ await key('ok');
 assert((await js(`[...window.app.store.solved.pos.keys()]`)).length === (await state()).points.length, 'repairing the distance re-solves every point');
 await settleFrame();
 assert(await js(`[...document.querySelectorAll('#overlay .lbl')].every(l => !/unsolved/.test(l.textContent))`), 'ghost and reason cleared');
+assert(await js(`document.getElementById('health-pill').hidden`), 'health pill clears after the repair');
+// A clean survey still opens the doctor on demand, via the data sheet.
+await click('#log-btn');
+await js(`[...document.querySelectorAll('#log-list [data-act="doctor"]')].at(0).click()`);
+assert(await js(`!document.getElementById('doctor-sheet').hidden`), 'survey check opens from the data sheet');
+assert(/No problems found/.test(await js(`document.getElementById('doctor-list').innerText`)), 'clean survey reports no problems');
+await click('#doctor-close');
 await click('#log-btn');
 await click('#log-close');
 // The transient unsolve pruned D from the refs; re-select for the next test.
