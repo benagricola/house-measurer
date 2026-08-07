@@ -168,6 +168,37 @@ function unsolvedPoints(floorOnly = true) {
   return out;
 }
 
+// Points whose ADJUSTED position sits on the opposite side of their
+// r1->r2 line to their stored side flag. Least squares can rescue a
+// mirrored point (strong redundant distances drag it across), which
+// LOOKS right - but the stale flag still poisons the chain solve for
+// any new point measured from it. Flipping the point heals the flag.
+function floorCentroid(floorId) {
+  let x = 0, y = 0, n = 0;
+  for (const pt of store.state.points) {
+    if (pt.floor !== floorId) continue;
+    const p = pos(pt.id);
+    if (!p) continue;
+    x += p.x; y += p.y; n++;
+  }
+  return n ? { x: x / n, y: y / n } : null;
+}
+
+function sideMismatches() {
+  const out = [];
+  for (const pt of store.state.points) {
+    const f = pt.fix;
+    if (!f || f.stack != null || f.side == null) continue;
+    const p = pos(pt.id), P = pos(f.r1), Q = pos(f.r2);
+    if (!p || !P || !Q) continue;
+    const cross = (Q.x - P.x) * (p.y - P.y) - (Q.y - P.y) * (p.x - P.x);
+    const len = Math.hypot(Q.x - P.x, Q.y - P.y) || 1;
+    if (Math.abs(cross) / len < 0.02) continue; // on the line: ambiguous, fine
+    if (Math.sign(cross) !== Math.sign(f.side)) out.push(pt);
+  }
+  return out;
+}
+
 function visibleLayers() {
   return new Set(store.state.layers.filter((l) => l.visible).map((l) => l.id));
 }
@@ -1012,6 +1043,17 @@ function renderLog() {
     addRow('<span class="dim">an unsolved point usually means one of its two fix distances is wrong - edit it in the measurements above</span>');
   }
 
+  const mism = sideMismatches();
+  if (mism.length) {
+    section('side flags to heal');
+    for (const pt of mism) {
+      addRow(
+        `<span class="log-name">${pt.name}</span>` +
+        `<span class="log-res warn">solution is on the other side of its reference line - select ${pt.name} and press flip</span>`
+      );
+    }
+  }
+
   section('walls and rooms');
   if (!store.state.walls.length) addRow('<span class="dim">none yet - points auto-chain into walls until a room closes</span>');
   for (const w of store.state.walls) {
@@ -1374,6 +1416,10 @@ function renderPanel() {
         cls: 'err',
       };
     }
+    else if (ui.refs.length < 2 && sideMismatches().length) {
+      const names = sideMismatches().map((p) => p.name).join(', ');
+      msg = { text: `${names}: the solved position contradicts the stored side flag (a rescued mirror) - select the point and press flip to heal it, or new points measured from it can fail.`, cls: 'warn' };
+    }
     else if (ui.refs.length < 2) msg = { text: 'Tap 2 reference points on the plan', cls: '' };
     else if (multiMode()) {
       const k = ui.multiD.length;
@@ -1447,11 +1493,15 @@ function renderPlan() {
     const active = wall.id === ui.activeWallId;
     // Measured points are on the inner wall surface: draw the wall band
     // shifted outward so the line through the points is its inner edge.
+    // Closed rooms know their inside (the polygon); open runs use the
+    // centroid of the floor's survey points instead - the surveyor and
+    // every mark are inside the space, the far side is unreachable.
     const solved = wall.pts.map(pos).filter(Boolean);
-    const cen = solved.length ? {
+    const runCen = solved.length ? {
       x: solved.reduce((s, q) => s + q.x, 0) / solved.length,
       y: solved.reduce((s, q) => s + q.y, 0) / solved.length,
     } : null;
+    const cen = wall.closed && solved.length >= 3 ? runCen : floorCentroid(wall.floor) ?? runCen;
     for (let i = 0; i + 1 < runs.length; i++) {
       const a = pos(runs[i]), b = pos(runs[i + 1]);
       if (!a || !b) continue;

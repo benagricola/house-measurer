@@ -371,6 +371,17 @@ export class View3D {
       }
     }
 
+    // Inside of an OPEN run = where the survey points are (the measured
+    // side is always the accessible one); closed rooms use their own
+    // polygon centroid.
+    const floorCen = new Map();
+    for (const p of state.points) {
+      const q = pos(p.id);
+      if (!q) continue;
+      const acc = floorCen.get(p.floor) || { x: 0, y: 0, n: 0 };
+      acc.x += q.x; acc.y += q.y; acc.n++;
+      floorCen.set(p.floor, acc);
+    }
     let all = [];
     for (const wall of state.walls) {
       if (!floorShown(wall.floor)) continue;
@@ -379,10 +390,13 @@ export class View3D {
       const pts = wall.pts.map(pos).filter(Boolean);
       if (pts.length < 2) continue;
       const H = wall.height || defaultH;
-      const cen = {
+      const runCen = {
         x: pts.reduce((s, p) => s + p.x, 0) / pts.length,
         y: pts.reduce((s, p) => s + p.y, 0) / pts.length,
       };
+      const fc = floorCen.get(wall.floor);
+      const cen = wall.closed && pts.length >= 3 ? runCen
+        : fc && fc.n ? { x: fc.x / fc.n, y: fc.y / fc.n } : runCen;
       const runIds = wall.closed && pts.length >= 3 ? [...wall.pts, wall.pts[0]] : wall.pts;
       const runs = wall.closed && pts.length >= 3 ? [...pts, pts[0]] : pts;
       for (let i = 0; i + 1 < runs.length; i++) {
