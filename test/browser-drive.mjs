@@ -380,10 +380,19 @@ await js('window.app.ui.refs = []; window.app.render();');
 await tapPoint('A');
 await tapPoint('D');
 refs = await js('window.app.ui.refs.map(id => window.app.store.point(id).name)');
-assert(refs.join(',') === 'A,D', `refs A,D for check (${refs})`);
-// True |A-D| = 3.00 m; record 3.02 -> 2 cm disagreement.
-await keys(['3', '0', '2']);
+assert(refs.join(',') === 'A,D', `refs A,D selected (${refs})`);
+// A and D are already tied by D's fix distance, so the button offers to
+// change that value rather than to add a rival one for the same pair.
+assert(await js(`document.getElementById('check-btn').textContent`) === 'edit', 'button reads edit for an already-measured pair');
+// B and D have no direct measurement: a genuine redundant check.
+// True |B-D| = 4.00 m; record 4.02 -> 2 cm disagreement.
+await js('window.app.ui.refs = []; window.app.render();');
+await tapPoint('B');
+await tapPoint('D');
+assert(await js(`document.getElementById('check-btn').textContent`) === 'record', 'button reads record for an unmeasured pair');
+await keys(['4', '0', '2']);
 await click('#check-btn');
+assert(await js(`document.getElementById('check-btn').textContent`) === 'edit', 'button switches to edit once the pair is measured');
 st = await state();
 assert(st.measurements.length === 6, 'check measurement recorded (6 total)');
 const pres = await js('[...window.app.store.solved.pres.values()].map(v => v * 100)');
@@ -402,7 +411,7 @@ await js(`window.app.ui.fields = ['','']; window.app.ui.active = 0; window.app.r
 await click('#log-btn');
 await shot('06-data');
 const logText = await js(`document.getElementById('log-list').innerText`);
-assert(logText.includes('A to D'), 'data sheet lists the check measurement');
+assert(logText.includes('B to D'), 'data sheet lists the check measurement');
 assert(!/laser/i.test(logText), 'laser section moved out of the data sheet');
 assert(/between/i.test(logText) && /measured/i.test(logText) && /error/i.test(logText), 'measurements table has column headings');
 assert(await js(`!!document.getElementById('laser-btn')`), 'laser button present in header');
@@ -418,12 +427,12 @@ assert(await js(`document.getElementById('shoot-btn').style.display`) === 'none'
 assert(/ceiling 250 cm/.test(logText), 'data sheet shows the room ceiling');
 assert(/cm/.test(logText), 'data sheet shows residuals');
 
-// Edit the check measurement to the true 3.00 -> residuals shrink.
+// Edit the check measurement to the true 4.00 -> residuals shrink.
 await js(`[...document.querySelectorAll('#log-list [data-act="edit"]')].at(-1).click()`);
-await keys(['3', '0', '0']);
+await keys(['4', '0', '0']);
 await key('ok');
 st = await state();
-assert(near(st.measurements.at(-1).d, 3.0), 'measurement edited via data sheet + keypad');
+assert(near(st.measurements.at(-1).d, 4.0), 'measurement edited via data sheet + keypad');
 
 // Deleting a load-bearing measurement requires an explicit second press.
 await click('#log-btn');
@@ -509,51 +518,63 @@ for (let i = 0; i < 4; i++) await click('#undo');
 assert((await state()).points.length === ptsBeforeStub, 'stub scenario unwound');
 await click('#log-btn');
 await click('#log-close');
-// The transient unsolve pruned D from the refs; re-select for the next test.
+// The transient unsolve pruned points from the refs; re-select the B-D
+// check pair for the next tests.
 await js(`(() => {
   const app = window.app, pts = app.store.state.points;
-  app.ui.refs = [pts[0].id, pts[3].id];
+  app.ui.refs = [pts[1].id, pts[3].id];
   app.render();
 })()`);
+const bdId = (await state()).measurements.at(-1).id;
+const bdVal = () => state().then((s) => s.measurements.find((m) => m.id === bdId).d);
 
-// A wildly-off check is challenged before it can poison the survey.
-await keys(['5', '0', '0']); // 5 m against the true 3.00 m
+// A wildly-off value is challenged before it can poison the survey. The
+// pair is already measured, so this guards an edit - and insisting
+// CHANGES that measurement rather than adding a rival one for the pair.
+await keys(['6', '0', '0']); // 6 m against the true 4.00 m
 await click('#check-btn');
-assert((await state()).measurements.length === 6, 'off-by-2m check held back on first press');
+assert(near(await bdVal(), 4.0), 'off-by-2m edit held back on first press');
 let chkStatus = await js(`document.getElementById('status').textContent`);
-assert(/again to keep/.test(chkStatus) && /apart/.test(chkStatus), `record guard explains itself (${chkStatus.slice(0, 60)}...)`);
+assert(/again to keep/.test(chkStatus) && /apart/.test(chkStatus), `guard explains itself (${chkStatus.slice(0, 60)}...)`);
+assert(/press edit again/i.test(chkStatus), 'guard names the button by its current label');
 await click('#check-btn'); // insist
 st = await state();
-assert(st.measurements.length === 7, 'second press records it anyway');
+assert(st.measurements.length === 6, 'insisting updates in place, never duplicates the pair');
+assert(near(await bdVal(), 6.0), 'the existing B-D measurement now holds the new value');
 chkStatus = await js(`document.getElementById('status').textContent`);
-assert(/disagrees|compromise/.test(chkStatus), 'post-commit message names the damage');
+assert(/updated/.test(chkStatus), 'message says updated');
 await click('#undo');
-assert((await state()).measurements.length === 6, 'undo removes the bad check');
+assert(near(await bdVal(), 4.0), 'undo restores the previous value');
 
-// Record with nothing typed = a one-field flow; OK saves the single value.
-// A pair that already has a measurement gets UPDATED, not duplicated.
+// Pressing with nothing typed opens a one-field flow; OK saves. On a
+// measured pair that is an edit in place, never a duplicate.
+assert(await js(`document.getElementById('check-btn').textContent`) === 'edit', 'measured pair offers edit');
 await click('#check-btn');
-assert(await js(`window.app.ui.flow?.kind`) === 'record', 'empty record starts the one-distance flow');
-assert(await js(`document.querySelector('#field0 label').textContent`) === 'A to D', 'flow asks for the single distance, no 1-of-2');
-assert(await js(`[...document.querySelectorAll('.field')].filter(f => f.style.display !== 'none').length`) === 1, 'one field in the record flow');
-assert(/currently/.test(await js(`document.getElementById('status').textContent`)), 'existing value shown for an update');
-await keys(['3', '0', '0']);
+assert(await js(`window.app.ui.flow?.kind`) === 'record', 'empty press starts the one-distance flow');
+assert(await js(`document.querySelector('#field0 label').textContent`) === 'B to D', 'flow asks for the single distance, no 1-of-2');
+assert(await js(`[...document.querySelectorAll('.field')].filter(f => f.style.display !== 'none').length`) === 1, 'one field in the flow');
+assert(/Editing/.test(await js(`document.getElementById('status').textContent`)), 'flow prompt says editing and shows the current value');
+await keys(['4', '0', '5']);
 await key('ok');
 st = await state();
-assert(await js(`window.app.ui.flow`) === null, 'OK saves and ends the record flow');
+assert(await js(`window.app.ui.flow`) === null, 'OK saves and ends the flow');
 assert(st.measurements.length === 6, 'existing pair updated in place, not duplicated');
-// A pair with no measurement yet: OK records a new one.
-await js(`(() => {
-  const app = window.app, pts = app.store.state.points;
-  app.ui.refs = [pts[1].id, pts[3].id]; app.render();  // B, D: unmeasured pair
-})()`);
+assert(near(await bdVal(), 4.05), 'the flow wrote the new value onto the same measurement');
+await click('#undo');
+assert(near(await bdVal(), 4.0), 'flow edit undoes');
+// Free the pair so the record path gets exercised through the flow too.
+await js(`window.app.store.deleteMeasurement(${bdId})`);
+assert((await state()).measurements.length === 5, 'check measurement removed');
+assert(await js(`document.getElementById('check-btn').textContent`) === 'record', 'freed pair reads record again');
 await click('#check-btn');
+assert(/type the measured distance/.test(await js(`document.getElementById('status').textContent`)), 'fresh pair prompt asks to record');
 await keys(['4', '0', '0']);
 await key('ok');
 st = await state();
-assert(st.measurements.length === 7 && near(st.measurements.at(-1).d, 4.0), 'unmeasured pair gains the check');
+assert(st.measurements.length === 6 && near(st.measurements.at(-1).d, 4.0), 'freed pair gains a fresh check');
 await click('#undo');
-assert((await state()).measurements.length === 6, 'record-flow check undoes');
+await click('#undo');
+assert((await state()).measurements.length === 6, 'both steps undo back to the recorded check');
 await js(`(() => {
   const app = window.app, pts = app.store.state.points;
   app.ui.refs = [pts[0].id, pts[3].id]; app.render();

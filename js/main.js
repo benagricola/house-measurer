@@ -110,6 +110,14 @@ const activeFloor = () => store.state.activeFloor;
 const onFloor = (thing) => thing && thing.floor === activeFloor();
 const floorVisible = (id) => store.floor(id)?.visible !== false;
 const offFloorRefs = () => ui.refs.filter((id) => !onFloor(store.point(id)));
+// The measurement already recorded between the two selected points, if
+// any - the button says "edit" for these and "record" for a fresh pair.
+const pairMeasurement = () => {
+  if (ui.refs.length !== 2) return null;
+  const [p, q] = ui.refs;
+  return store.state.measurements.find(
+    (m) => (m.p === p && m.q === q) || (m.p === q && m.q === p)) ?? null;
+};
 
 function say(text, cls = '') {
   ui.message = text ? { text, cls } : null;
@@ -352,7 +360,7 @@ function surveyIssues() {
       body: `Millimetres of laser noise become centimetres of position error at this angle, with no residual to show for it. ${candTxt}`,
       steps: cands.length ? [
         `Measure ${pt.name} to ${cands[0].pt.name} (about ${fmtDist(cands[0].d)}).`,
-        'Tap the button below (it selects the pair), type the distance, press record.',
+        'Tap the button below (it selects the pair), then press record and type the distance.',
       ] : [],
       selectIds: cands.length ? [pt.id, cands[0].pt.id] : [pt.id],
     });
@@ -385,7 +393,7 @@ function surveyIssues() {
         body: 'An edge this short inherits the relative error of two long fixes, so its angle is unreliable - it will draw slanted even when the real corners are square. Measure it directly with a ruler or tape; for a protrusion, also record the two diagonals across it.',
         steps: [
           `Measure ${na} to ${nb} directly.`,
-          'Tap the button below (it selects the pair), type the value, press record.',
+          'Tap the button below (it selects the pair), then press record and type the value.',
         ],
         selectIds: [a, b],
       });
@@ -758,13 +766,24 @@ function commitCheck() {
   const p1 = pos(ui.refs[0]), p2 = pos(ui.refs[1]);
   const predicted = Math.hypot(p2.x - p1.x, p2.y - p1.y);
   const diff = Math.abs(v - predicted);
+  const existing = pairMeasurement();
   const armKey = `${ui.refs[0]}:${ui.refs[1]}:${v}`;
   if (diff > 0.15 && ui.checkArm !== armKey) {
     ui.checkArm = armKey;
-    return say(`${n1} to ${n2} currently solves to ${fmtDist(predicted)}, but you typed ${fmtDist(v)} - ${(diff * 100).toFixed(0)} cm apart. Typo or cm/m mix-up? Press record again to keep it anyway.`, 'err');
+    return say(`${n1} to ${n2} currently solves to ${fmtDist(predicted)}, but you typed ${fmtDist(v)} - ${(diff * 100).toFixed(0)} cm apart. Typo or cm/m mix-up? Press ${existing ? 'edit' : 'record'} again to keep it anyway.`, 'err');
   }
   ui.checkArm = null;
   if (!ui.coachDone) coachFinish();
+  // An already-measured pair is CHANGED, never duplicated - whichever
+  // route got here (typed then pressed, or through the flow).
+  if (existing) {
+    store.updateMeasurement(existing.id, v);
+    ui.fields = ['', ''];
+    ui.active = 0;
+    const r0 = (store.solved.mres.get(existing.id) || 0) * 100;
+    return note(`${n1} to ${n2} updated to ${fmtDist(v)} - residual ${r0.toFixed(1)} cm`,
+      Math.abs(r0) < 1 ? 'good' : Math.abs(r0) < 3 ? 'warn' : 'err');
+  }
   const id = store.addMeasurement(ui.refs[0], ui.refs[1], v);
   const r = (store.solved.mres.get(id) || 0) * 100;
   ui.fields = ['', ''];
@@ -1201,7 +1220,7 @@ function renderDoctor() {
   if (!issues.length) {
     list.innerHTML = '<div class="doc-card info"><b>No problems found</b>' +
       '<p>Every point solves, no side flags disagree, residuals are inside 3 cm and no fix has a dangerously shallow angle. ' +
-      'Recorded diagonals are still the cheapest insurance - select two points, type the taped or shot distance, press record.</p></div>';
+      'Recorded diagonals are still the cheapest insurance - select two points, press record, type the taped or shot distance.</p></div>';
     return;
   }
   for (const iss of issues) {
@@ -1220,7 +1239,7 @@ function renderDoctor() {
         ui.flow = null;
         $('doctor-sheet').hidden = true;
         say(iss.selectIds.length > 1
-          ? 'Pair selected - type the measured distance, then press record'
+          ? 'Pair selected - press record (or edit) and type the measured distance'
           : 'Point selected - press flip to heal it, or delete if it is wrong');
       });
       const row = document.createElement('div');
@@ -1624,7 +1643,12 @@ function renderPanel() {
       if (id) el.addEventListener('click', () => toggleRef(id));
       slots.appendChild(el);
     }
+    const pairM = pairMeasurement();
     $('check-btn').style.display = ui.refs.length === 2 && !ui.flow && !offFloorRefs().length ? '' : 'none';
+    $('check-btn').textContent = pairM ? 'edit' : 'record';
+    $('check-btn').title = pairM
+      ? `change the recorded distance between these two points (now ${fmtDist(pairM.d)})`
+      : 'record the measured distance between these two points';
     $('stack-btn').style.display = !ui.flow && offFloorRefs().length ? '' : 'none';
     $('del-point').style.display = ui.mode === 'measure' && !ui.flow && ui.refs.length === 1 ? '' : 'none';
     const selFlip = ui.refs.length === 1 && store.point(ui.refs[0])?.fix?.side != null ? ui.refs[0] : null;
@@ -2222,7 +2246,7 @@ const COACH_TIPS = [
   'The baseline: tape two marks (A and B) at either end of a straight wall, measure between them with the laser, type it in. Every other point gets fixed by distances back to points like these.',
   'Reference points first: new points are reference-only while walling is off. Fix a few spread around the space - especially ones that can see what A and B cannot (through doorways, past corners). Rays crossing near 90 degrees make the strongest fixes.',
   'Build the outline: in walls mode tap the corner points in order, and tap the first corner again to close the room (the ceiling height is asked once closed). Or toggle walling: on (also in walls mode) and new points chain into the outline as you measure them.',
-  'Tighten it: select two points, type a measured distance, press record. Disagreement shows up as residuals, and the detail button reveals wall angles and weak fixes. That is the whole loop - references, corners, checks.',
+  'Tighten it: select two points, press record, type a measured distance. Disagreement shows up as residuals, and the detail button reveals wall angles and weak fixes. That is the whole loop - references, corners, checks.',
 ];
 
 function coachStage() {
@@ -2608,7 +2632,7 @@ $('check-btn').addEventListener('click', () => {
   const [n1, n2] = ui.refs.map((id) => store.point(id).name);
   startFlow({ kind: 'record', p, q, measId: existing?.id ?? null },
     existing
-      ? `${n1} to ${n2} is currently ${fmtDist(existing.d)} - type the new value, OK updates it`
+      ? `Editing ${n1} to ${n2} (now ${fmtDist(existing.d)}) - type the new value, OK saves it`
       : `${n1} to ${n2}: type the measured distance, OK records it`);
 });
 $('stack-btn').addEventListener('click', stackRefs);
