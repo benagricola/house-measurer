@@ -157,14 +157,6 @@ header button:disabled { opacity: 0.35; }
   font-variant-numeric: tabular-nums;
 }
 .lbl.ghost { font-size: 12px; font-weight: 600; color: var(--teal); }
-.lbl.aim {
-  font-size: 11.5px;
-  font-weight: 700;
-  color: #fff;
-  background: var(--amber);
-  padding: 2px 7px;
-  border-radius: 99px;
-}
 .lbl.ghost.dim { opacity: 0.55; font-weight: 400; }
 .lbl.ang {
   font-size: 11px;
@@ -282,6 +274,8 @@ header button:disabled { opacity: 0.35; }
   text-align: center;
 }
 .refslot.extra { min-width: 44px; opacity: 0.6; padding: 4px 8px; }
+/* The slot whose distance is being entered right now. */
+.refslot.now { border-color: var(--teal); box-shadow: 0 0 0 2px var(--teal) inset; }
 .refslot.set {
   border: 1px solid var(--amber);
   background: var(--card);

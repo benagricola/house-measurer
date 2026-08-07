@@ -433,8 +433,9 @@ function okIsShoot() {
   return ui.mode === 'measure' || anchorMode();
 }
 
-// The point the next reading should be aimed at, so the app can say and
-// show WHICH mark to shoot rather than leaving it to memory.
+// Which mark the next distance is for. A distance is symmetric - you
+// may stand at either end - so this only ever NAMES the mark, never
+// tells you which way to point.
 function aimTarget() {
   if (!ui.refs.length || ui.mode !== 'measure' || ui.flow || anchorMode()) return null;
   const id = multiMode() ? ui.refs[ui.multiD.length] : ui.refs[ui.active];
@@ -1611,7 +1612,10 @@ function fieldLabel(i) {
   if (ui.flow?.kind === 'room-height') return i === 0 ? 'ceiling height' : '';
   if (multiMode()) {
     const k = ui.multiD.length;
-    return i === 0 ? `to ${store.point(ui.refs[k])?.name ?? '?'} (${k + 1} of ${ui.refs.length})` : '';
+    const pt = store.point(ui.refs[k]);
+    return i === 0
+      ? `to ${pt?.name ?? '?'}${pt?.note ? ` - ${pt.note}` : ''} (${k + 1} of ${ui.refs.length})`
+      : '';
   }
   if (ui.flow?.kind === 'wall-edit') {
     const w = store.wall(ui.flow.wallId);
@@ -1626,7 +1630,9 @@ function fieldLabel(i) {
     return `height (${Math.round(h1 * 100)}${h1 !== h2 ? '/' + Math.round(h2 * 100) : ''})`;
   }
   const id = ui.refs[i];
-  return `${id ? `to ${store.point(id).name}` : `to ref ${i + 1}`} (${i + 1} of 2)`;
+  if (!id) return `to ref ${i + 1} (${i + 1} of 2)`;
+  const pt = store.point(id);
+  return `to ${pt.name}${pt.note ? ` - ${pt.note}` : ''} (${i + 1} of 2)`;
 }
 
 function renderPanel() {
@@ -1676,8 +1682,10 @@ function renderPanel() {
     for (let i = 0; i < shown; i++) {
       const id = ui.refs[i];
       const el = document.createElement('span');
-      el.className = 'refslot' + (id ? ' set' : '') + (i >= 2 && !id ? ' extra' : '');
+      const isNow = id != null && id === aimTarget();
+      el.className = 'refslot' + (id ? ' set' : '') + (i >= 2 && !id ? ' extra' : '') + (isNow ? ' now' : '');
       el.textContent = id ? store.point(id).name : i < 2 ? `tap ref ${i + 1}` : '+ ref';
+      if (isNow) el.title = store.point(id).note || 'the distance being entered now';
       if (id) el.addEventListener('click', () => toggleRef(id));
       slots.appendChild(el);
     }
@@ -1788,7 +1796,7 @@ function renderPanel() {
       const k = ui.multiD.length;
       const t = store.point(ui.refs[k]);
       msg = {
-        text: `Multi-fix: distance ${k + 1} of ${ui.refs.length}, aim at ${t?.name}${t?.note ? ` (${t.note})` : ''} - side picks itself from the extras`,
+        text: `Multi-fix: distance ${k + 1} of ${ui.refs.length}, ${t?.name}${t?.note ? ` - ${t.note}` : ''} - side picks itself from the extras`,
         cls: '',
       };
     }
@@ -1800,9 +1808,8 @@ function renderPanel() {
         msg = { text: 'OK places the marked candidate - or tap the other one', cls: '' };
       } else {
         const t = store.point(ui.refs[ui.active]);
-        const verb = laser.canTrigger ? 'Shoot' : 'Measure';
         msg = t
-          ? { text: `${verb} ${t.name}${t.note ? ` (${t.note})` : ''} - distance ${ui.active + 1} of 2`, cls: '' }
+          ? { text: `Distance ${ui.active + 1} of 2: ${t.name}${t.note ? ` - ${t.note}` : ''}`, cls: '' }
           : { text: `Type distances to ${store.point(ui.refs[0]).name} and ${store.point(ui.refs[1]).name}`, cls: '' };
       }
     }
@@ -1836,7 +1843,7 @@ function renderPanel() {
 }
 
 function renderPlan() {
-  const content = { points: [], segments: [], circles: [], ghosts: [], rects: [], polygons: [], handles: [], aims: [], labels: [] };
+  const content = { points: [], segments: [], circles: [], ghosts: [], rects: [], polygons: [], handles: [], labels: [] };
   const pts = store.state.points;
 
   if (anchorMode()) {
@@ -2030,25 +2037,15 @@ function renderPlan() {
     content.labels.push({ key: `ue${u.pt.id}`, x: u.p.x, y: u.p.y, text: `unsolved: ${u.reason}`, cls: 'res err', dy: 15 });
   }
 
-  // Aim marker: an unmistakable ring on the point the next shot is for,
-  // with its note when it has one - marks in the room are often
-  // unlabelled, and by point S nobody remembers which is which.
+  // The current mark is called out in the reference slots and the field
+  // label, not on the plan - a marker there just covers the geometry.
+  // Reframing is still worth it when the mark is off screen.
   const aimId = aimTarget();
-  if (aimId != null) {
+  if (aimId != null && renderPlan.lastAim !== aimId) {
+    renderPlan.lastAim = aimId;
     const ap = pos(aimId);
-    const apt = store.point(aimId);
-    content.aims.push({ x: ap.x, y: ap.y });
-    content.labels.push({
-      key: 'aim', x: ap.x, y: ap.y, dy: 32,
-      text: apt.note ? `aim here: ${apt.note}` : 'aim here', cls: 'aim',
-    });
-    // Keep the target on screen without fighting the user's panning:
-    // only reframe when the target itself changes.
-    if (renderPlan.lastAim !== aimId) {
-      renderPlan.lastAim = aimId;
-      if (!plan.isOnScreen(ap.x, ap.y)) plan.fitAll([...store.solved.pos.values()]);
-    }
-  } else {
+    if (ap && !plan.isOnScreen(ap.x, ap.y)) plan.fitAll([...store.solved.pos.values()]);
+  } else if (aimId == null) {
     renderPlan.lastAim = null;
   }
 
@@ -2283,16 +2280,6 @@ function surveyViz() {
     viz.points.push({ id: u.pt.id, x: u.p.x, y: u.p.y, e: activeE, style: 'anchor', ref: null, isLast: false });
     viz.labels.push({ key: `up${u.pt.id}`, x: u.p.x, y: u.p.y, z: activeE + 0.55, text: `${u.pt.name}?`, cls: 'name' });
     viz.labels.push({ key: `ue${u.pt.id}`, x: u.p.x, y: u.p.y, z: activeE + 0.32, text: `unsolved: ${u.reason}`, cls: 'res err' });
-  }
-  const aimId3 = aimTarget();
-  if (aimId3 != null) {
-    const ap = pos(aimId3);
-    const apt = store.point(aimId3);
-    const ae = elev(apt.floor);
-    viz.labels.push({
-      key: 'aim', x: ap.x, y: ap.y, z: ae + 0.95,
-      text: apt.note ? `aim here: ${apt.note}` : 'aim here', cls: 'aim',
-    });
   }
   const pv = preview();
   if (pv) {

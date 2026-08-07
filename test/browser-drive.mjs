@@ -1101,13 +1101,17 @@ assert(await js(`document.querySelector('[data-key="ok"]').textContent`) === 'sh
 assert(await js(`document.querySelector('[data-key="ok"]').classList.contains('shoot')`), 'shoot styling applied');
 {
   const stat = await js(`document.getElementById('status').textContent`);
-  assert(/Shoot A/.test(stat) && /left window reveal/.test(stat), `status names the mark and its note (${stat.slice(0, 60)})`);
+  assert(/Distance 1 of 2/.test(stat) && /left window reveal/.test(stat), `status names the mark and its note (${stat.slice(0, 60)})`);
+  assert(!/aim|shoot at/i.test(stat), 'status implies no direction - a distance reads the same from either end');
+}
+// The cue lives in the reference slot and the field label, never on the plan.
+assert(await js(`document.querySelector('#field0 label').textContent`) === 'to A - left window reveal (1 of 2)', 'field label carries the mark and its note');
+{
+  const now = await js(`[...document.querySelectorAll('.refslot')].map(e => e.className.includes('now'))`);
+  assert(now[0] === true && now[1] === false, 'the slot being entered is the highlighted one');
 }
 await settleFrame();
-{
-  const lbls = await js(`[...document.querySelectorAll('#overlay .lbl.aim')].map(l => l.textContent)`);
-  assert(lbls.length === 1 && /aim here: left window reveal/.test(lbls[0]), `aim marker names the target (${lbls})`);
-}
+assert(await js(`document.querySelectorAll('#overlay .lbl.aim').length`) === 0, 'nothing is drawn over the plan for aiming');
 // The dot is held on while the reading is expected, so aiming does not
 // need the meter's own button.
 assert(await js(`window.app.laser.aiming === true`), 'aim keep-alive runs while a reading is expected');
@@ -1120,6 +1124,12 @@ assert(await js(`window.app.ui.active`) === 0, 'shooting does not advance the fi
 await key('2');
 assert(await js(`document.querySelector('[data-key="ok"]').textContent`) === 'OK', 'OK returns once a value is typed');
 assert(await js(`window.app.laser.aiming === false`), 'a typed value stops the keep-alive');
+await key('ok');
+{
+  const now = await js(`[...document.querySelectorAll('.refslot')].map(e => e.className.includes('now'))`);
+  assert(now[0] === false && now[1] === true, 'the highlight follows to the second distance');
+}
+await key('del');
 await key('del');
 assert(await js(`document.querySelector('[data-key="ok"]').textContent`) === 'shoot', 'and back to shoot when cleared');
 assert(await js(`window.app.laser.aiming === true`), 'clearing the field resumes the dot');
