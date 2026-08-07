@@ -96,6 +96,40 @@ test('itemCorners and pointInItem respect rotation', () => {
   assert.ok(!pointInItem({ x: 1.9, y: 1 }, it));
 });
 
+test('store: late flip of a mis-sided point, then mirror of its branch', () => {
+  const st = new Store(memStorage());
+  const { a, b } = st.setAnchors(4, { wall: false });
+  const c = st.addPoint(a, b, 3, 5, 1, {});   // 3-4-5: C = (0, 3)
+  const d = st.addPoint(a, c, 2, 2, 1, {});   // D = (-1.3229, 1.5)
+  const t = st.addStackedPoint(d, {});        // twin riding on D
+  const pos = (id) => st.solved.pos.get(id);
+  close(pos(c).y, 3, 1e-9);
+  close(pos(d).x, -Math.sqrt(4 - 2.25), 1e-9);
+  close(pos(d).y, 1.5, 1e-9);
+
+  // The branch of C is everything transitively fixed from it.
+  const branch = st.pointBranch(c).map((p) => p.id).sort();
+  assert.deepEqual(branch, [d, t].sort(), 'branch = D and its stacked twin');
+
+  st.flipSide(c);
+  close(pos(c).y, -3, 1e-9, 'C mirrors across the baseline');
+  // D re-solves from the moved C with its stored side: NOT the mirror.
+  close(pos(d).x, Math.sqrt(4 - 2.25), 1e-9);
+  close(pos(d).y, -1.5, 1e-9);
+
+  st.flipDependents(c);
+  // Now the whole branch is the exact reflection of the original.
+  close(pos(d).x, -Math.sqrt(4 - 2.25), 1e-9);
+  close(pos(d).y, -1.5, 1e-9);
+  close(pos(t).x, pos(d).x, 1e-12, 'stacked twin follows, no side of its own');
+  assert.equal(st.point(t).fix.side, undefined);
+
+  st.undo();
+  st.undo();
+  close(pos(c).y, 3, 1e-9, 'two undos restore everything');
+  close(pos(d).y, 1.5, 1e-9);
+});
+
 test('store: reference-first anchors take no run; seedWallRun starts it at A-B', () => {
   const st = new Store(memStorage());
   const { a, b } = st.setAnchors(3.42, { wall: false });

@@ -141,6 +141,40 @@ export class Store {
     );
   }
 
+  // Everything transitively fixed from this point (through two-distance
+  // refs and stacked twins), NOT including the point itself.
+  pointBranch(id) {
+    const ids = new Set([id]);
+    let grew = true;
+    while (grew) {
+      grew = false;
+      for (const p of this.state.points) {
+        if (!p.fix || ids.has(p.id)) continue;
+        if (ids.has(p.fix.r1) || ids.has(p.fix.r2) || ids.has(p.fix.stack)) {
+          ids.add(p.id);
+          grew = true;
+        }
+      }
+    }
+    ids.delete(id);
+    return this.state.points.filter((p) => ids.has(p.id));
+  }
+
+  // Mirror a whole mis-sided branch in one step: negates the side flag of
+  // every point transitively fixed from id (stacked twins have no side and
+  // simply follow their owner). Used after flipping a reference point when
+  // its dependents turn out to be mirrored with it.
+  flipDependents(id) {
+    const branch = this.pointBranch(id);
+    const flipIds = new Set(branch.filter((p) => p.fix?.side != null).map((p) => p.id));
+    if (flipIds.size) {
+      this.commit((s) => {
+        for (const p of s.points) if (flipIds.has(p.id)) p.fix.side *= -1;
+      });
+    }
+    return branch;
+  }
+
   // Take a point out of every wall polyline WITHOUT deleting it - for
   // points that were only ever references, not corners. Closed loops stay
   // closed while they keep 3+ points (the outline simply reroutes).

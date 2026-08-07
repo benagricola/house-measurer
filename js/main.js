@@ -148,6 +148,7 @@ function validateUi() {
   if (ui.refs.length !== before) ui.multiD = [];
   if (!Array.isArray(ui.multiD)) ui.multiD = [];
   if (ui.lastId && !store.point(ui.lastId)) ui.lastId = null;
+  if (ui.flipArm != null && (ui.refs.length !== 1 || ui.refs[0] !== ui.flipArm)) ui.flipArm = null;
   if (ui.selItem && !store.item(ui.selItem)) ui.selItem = null;
   if (ui.activeWallId && !store.wall(ui.activeWallId)) ui.activeWallId = null;
 }
@@ -305,6 +306,7 @@ function toggleRef(id) {
   else if (ui.refs.length < 4) ui.refs.push(id);
   else return say('Four references is the maximum - tap one to deselect it first', 'warn');
   ui.multiD = [];
+  ui.flipArm = null;
   ui.message = null;
   render();
 }
@@ -549,6 +551,30 @@ function pressFlip() {
     const it = store.item(ui.selItem);
     if (it && !it.locked) store.updateItem(ui.selItem, { rot: it.rot + Math.PI / 2 });
     return;
+  }
+  // A single selected point flips no matter when it was measured. Its
+  // dependents re-solve from the new position with their stored sides;
+  // when the whole branch turns out mirrored, a second press of flip
+  // mirrors the dependents as well.
+  if (ui.mode === 'measure' && !ui.flow && ui.refs.length === 1) {
+    const id = ui.refs[0];
+    const pt = store.point(id);
+    if (pt?.fix?.side != null) {
+      if (ui.flipArm === id) {
+        ui.flipArm = null;
+        const branch = store.flipDependents(id);
+        const flipped = branch.filter((p) => p.fix?.side != null);
+        return note(flipped.length
+          ? `${flipped.map((p) => p.name).join(', ')} mirrored to follow ${pt.name}`
+          : `Nothing measured from ${pt.name} to mirror`, 'good');
+      }
+      store.flipSide(id);
+      const deps = store.pointBranch(id);
+      ui.flipArm = deps.length ? id : null;
+      return say(`${pt.name} flipped to the other side${deps.length
+        ? ` - ${deps.map((p) => p.name).join(', ')} re-solved from it. If they landed mirrored too, press flip again.`
+        : ''}`, 'good');
+    }
   }
   if (ui.lastId && store.point(ui.lastId)?.fix) store.flipSide(ui.lastId);
 }
@@ -1272,6 +1298,7 @@ function renderPanel() {
       ui.flow?.kind === 'item-side' || ui.flow?.kind === 'item-walloffset' ||
       (twoFieldFlow() && ui.flow && preview()?.cands) ||
       (ui.mode === 'move' && ui.selItem && !store.item(ui.selItem)?.locked) ||
+      (ui.mode === 'measure' && !ui.flow && ui.refs.length === 1 && store.point(ui.refs[0])?.fix?.side != null) ||
       (ui.mode === 'measure' && !ui.flow && ui.lastId && store.point(ui.lastId)?.fix)
     );
   }
@@ -2083,8 +2110,8 @@ try {
 
 buildKeypad();
 
-$('undo').addEventListener('click', () => store.undo());
-$('redo').addEventListener('click', () => store.redo());
+$('undo').addEventListener('click', () => { ui.flipArm = null; store.undo(); });
+$('redo').addEventListener('click', () => { ui.flipArm = null; store.redo(); });
 $('fit').addEventListener('click', () => {
   if (ui.view === '3d' && view3d) { view3d.refit(); render(); }
   else plan.fitAll([...store.solved.pos.values()]);

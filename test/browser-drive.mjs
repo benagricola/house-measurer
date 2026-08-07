@@ -249,6 +249,27 @@ await click('#redo');
 st = await state();
 assert(st.points.length === 4 && st.walls[0].pts.length === 4, 'redo restores D and the link');
 
+// Flip a mis-sided point AFTER later points were measured from it: select
+// just C, flip (C mirrors, D re-solves), flip again (branch mirrors too).
+await tapPoint('A'); // refs [A,C] -> [C]
+refs = await js('window.app.ui.refs.map(id => window.app.store.point(id).name)');
+assert(refs.join(',') === 'C', `single selection for the late flip (${refs})`);
+await key('flip');
+let posCf = await js('[...window.app.store.solved.pos][2][1]');
+let posDf = await js('[...window.app.store.solved.pos][3][1]');
+assert(near(posCf.y, -2.4996, 2e-3), 'late flip mirrors C across the baseline');
+assert(Math.abs(posDf.y - 2.921) > 0.2, 'D re-solved from the moved C');
+assert(/press flip again/.test(await js(`document.getElementById('status').textContent`)), 'status offers mirroring the branch');
+await key('flip');
+posDf = await js('[...window.app.store.solved.pos][3][1]');
+assert(near(posDf.x, 0.684, 3e-3) && near(posDf.y, -2.921, 3e-3), 'second flip lands D at the exact reflection');
+await click('#undo');
+await click('#undo');
+posCf = await js('[...window.app.store.solved.pos][2][1]');
+posDf = await js('[...window.app.store.solved.pos][3][1]');
+assert(near(posCf.y, 2.4996, 2e-3) && near(posDf.y, 2.921, 3e-3), 'two undos restore both sides');
+await js(`(() => { const app = window.app, pts = app.store.state.points; app.ui.refs = [pts[0].id, pts[2].id]; app.render(); })()`);
+
 // One-handed zoom: double-tap on empty canvas zooms in about the tap.
 await settleFrame();
 const vh0 = await js('window.app.plan.viewH');
