@@ -418,6 +418,39 @@ st = await state();
 assert(st.measurements.length === 5, 'second press deletes it');
 await click('#undo');
 assert((await state()).measurements.length === 6, 'undo restores the fix measurement');
+
+// Break a fix distance: the point must NOT vanish - it shows as a red
+// ghost with the reason, the status names it, and data explains it.
+await js(`[...document.querySelectorAll('#log-list [data-act="edit"]')].at(1).click()`);
+await keys(['9', '0', '0']); // A-C = 9 m: impossible against A-B = 3.42
+await key('ok');
+st = await state();
+assert(!(await js(`[...window.app.store.solved.pos.keys()]`)).includes(st.points[2].id), 'C unsolved after the bad edit');
+await settleFrame();
+{
+  const lbls = await js(`[...document.querySelectorAll('#overlay .lbl')].map(l => l.textContent)`);
+  assert(lbls.some((t) => t === 'C?'), 'unsolved C still drawn as a ghost');
+  assert(lbls.some((t) => /unsolved: circles miss by/.test(t)), `ghost carries the reason (${lbls.filter(t => /unsolved/.test(t))})`);
+}
+await js(`window.app.ui.message = null; window.app.ui.refs = []; window.app.render();`);
+{
+  const stat = await js(`document.getElementById('status').textContent`);
+  assert(/cannot be placed/.test(stat) && /C/.test(stat), `status names the unsolved points (${stat.slice(0, 60)})`);
+}
+await click('#log-btn');
+{
+  const logTxt = await js(`document.getElementById('log-list').innerText`);
+  assert(/unsolved points/i.test(logTxt) && /circles miss/.test(logTxt), 'data sheet lists unsolved points with the reason');
+  assert(/unsolved/.test(logTxt), 'broken measurements flagged');
+}
+// Repair the distance; everything solves and the warnings clear.
+await js(`[...document.querySelectorAll('#log-list [data-act="edit"]')].at(1).click()`);
+await keys(['4', '2', '7']);
+await key('ok');
+assert((await js(`[...window.app.store.solved.pos.keys()]`)).length === (await state()).points.length, 'repairing the distance re-solves every point');
+await settleFrame();
+assert(await js(`[...document.querySelectorAll('#overlay .lbl')].every(l => !/unsolved/.test(l.textContent))`), 'ghost and reason cleared');
+await click('#log-btn');
 await click('#log-close');
 // The transient unsolve pruned D from the refs; re-select for the next test.
 await js(`(() => {

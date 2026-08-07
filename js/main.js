@@ -138,6 +138,36 @@ function note(text, cls = '') {
   say(text, cls);
 }
 
+// Points that failed to solve, with the reason and a best-effort plan
+// position (the clamped circle intersection) when their references still
+// solve. Unsolved points MUST stay visible - a silently vanished point
+// has caused real survey damage before.
+function unsolvedPoints(floorOnly = true) {
+  const out = [];
+  const errs = store.solved.errors;
+  if (!errs || !errs.size) return out;
+  for (const pt of store.state.points) {
+    if (pos(pt.id)) continue;
+    const reason = errs.get(pt.id);
+    if (!reason) continue;
+    if (floorOnly && !onFloor(pt)) continue;
+    let p = null;
+    const f = pt.fix;
+    if (f && f.stack == null) {
+      const P = pos(f.r1), Q = pos(f.r2);
+      const dTo = (a) => store.state.measurements.find(
+        (m) => (m.p === a && m.q === pt.id) || (m.p === pt.id && m.q === a))?.d;
+      const d1 = dTo(f.r1), d2 = dTo(f.r2);
+      if (P && Q && d1 != null && d2 != null) {
+        const c = circleIntersect(P, d1, Q, d2);
+        if (c.ok) p = f.side >= 0 ? c.left : c.right;
+      }
+    }
+    out.push({ pt, reason, p });
+  }
+  return out;
+}
+
 function visibleLayers() {
   return new Set(store.state.layers.filter((l) => l.visible).map((l) => l.id));
 }
@@ -930,8 +960,9 @@ function renderLog() {
   for (const m of store.state.measurements) {
     const a = store.point(m.p)?.name ?? '?', b = store.point(m.q)?.name ?? '?';
     const r = store.solved.mres.get(m.id);
-    const rc = r == null ? '' : Math.abs(r) < 0.01 ? 'good' : Math.abs(r) < 0.03 ? 'warn' : 'err';
-    const rtxt = r == null ? '' : `${(r * 100).toFixed(1)} cm`;
+    const broken = r == null && (store.solved.errors?.has(m.p) || store.solved.errors?.has(m.q));
+    const rc = broken ? 'err' : r == null ? '' : Math.abs(r) < 0.01 ? 'good' : Math.abs(r) < 0.03 ? 'warn' : 'err';
+    const rtxt = broken ? 'unsolved' : r == null ? '' : `${(r * 100).toFixed(1)} cm`;
     const row = addRow(
       `<span class="log-name">${a} to ${b}</span><span class="log-val">${fmtDist(m.d)}</span>` +
       `<span class="log-res ${rc}">${rtxt}</span>` +
@@ -954,6 +985,31 @@ function renderLog() {
       ui.measArm = null;
       store.deleteMeasurement(m.id);
     });
+  }
+
+  const unsolved = unsolvedPoints(false);
+  if (unsolved.length) {
+    section('unsolved points');
+    for (const u of unsolved) {
+      const floorName = store.floor(u.pt.floor)?.name;
+      const row = addRow(
+        `<span class="log-name">${u.pt.name}${floorName && u.pt.floor !== activeFloor() ? ` <span class="dim">(${floorName})</span>` : ''}</span>` +
+        `<span class="log-res err">${u.reason}</span>` +
+        `<button data-act="del">x</button>`
+      );
+      row.querySelector('[data-act="del"]').addEventListener('click', () => {
+        const deps = store.pointBranch(u.pt.id);
+        if (deps.length && ui.measArm !== `pt${u.pt.id}`) {
+          ui.measArm = `pt${u.pt.id}`;
+          say(`${u.pt.name} has ${deps.map((d) => d.name).join(', ')} measured from it - deleting unsolves them too. Press x again to delete anyway.`, 'err');
+          return;
+        }
+        ui.measArm = null;
+        store.deletePoint(u.pt.id);
+        toast(`${u.pt.name} deleted`, 'good');
+      });
+    }
+    addRow('<span class="dim">an unsolved point usually means one of its two fix distances is wrong - edit it in the measurements above</span>');
   }
 
   section('walls and rooms');
@@ -1311,6 +1367,13 @@ function renderPanel() {
     else if (ui.mode === 'move') msg = { text: ui.selItem ? 'Drag to move, handle rotates, flip = 90 degrees' : 'Tap an item to select it', cls: '' };
     else if (ui.mode === 'item') msg = { text: 'Tap an item to edit it, or add a new one', cls: '' };
     else if (ui.flow) msg = { text: '', cls: '' };
+    else if (ui.refs.length < 2 && unsolvedPoints().length) {
+      const u = unsolvedPoints();
+      msg = {
+        text: `${u.map((x) => x.pt.name).join(', ')} cannot be placed - ${u[0].reason}${u.length > 1 ? ' (first of ' + u.length + ')' : ''}. Edit the distances in data, or delete the point there.`,
+        cls: 'err',
+      };
+    }
     else if (ui.refs.length < 2) msg = { text: 'Tap 2 reference points on the plan', cls: '' };
     else if (multiMode()) {
       const k = ui.multiD.length;
@@ -1530,6 +1593,16 @@ function renderPlan() {
       content.labels.push({ key: `r${pt.id}`, x: p.x, y: p.y, text: `${(res * 100).toFixed(1)}`, cls, dy: 15 });
     }
   }
+  // Unsolved points: red marker at the nearest-consistent position (or
+  // none if their references are broken too) plus the reason, so a
+  // failed fix is a visible, explained thing rather than a vanishing.
+  for (const u of unsolvedPoints()) {
+    if (!u.p) continue;
+    content.points.push({ x: u.p.x, y: u.p.y, style: 'error' });
+    content.labels.push({ key: `up${u.pt.id}`, x: u.p.x, y: u.p.y, text: `${u.pt.name}?`, cls: 'name', dy: -18 });
+    content.labels.push({ key: `ue${u.pt.id}`, x: u.p.x, y: u.p.y, text: `unsolved: ${u.reason}`, cls: 'res err', dy: 15 });
+  }
+
   // Two-distance preview (points and item corners).
   const pv = preview();
   if (pv && pv.cands && pv.cands.gap <= CLAMP_TOL) {
@@ -1755,6 +1828,12 @@ function surveyViz() {
         });
       }
     }
+  }
+  for (const u of unsolvedPoints()) {
+    if (!u.p) continue;
+    viz.points.push({ id: u.pt.id, x: u.p.x, y: u.p.y, e: activeE, style: 'anchor', ref: null, isLast: false });
+    viz.labels.push({ key: `up${u.pt.id}`, x: u.p.x, y: u.p.y, z: activeE + 0.55, text: `${u.pt.name}?`, cls: 'name' });
+    viz.labels.push({ key: `ue${u.pt.id}`, x: u.p.x, y: u.p.y, z: activeE + 0.32, text: `unsolved: ${u.reason}`, cls: 'res err' });
   }
   const pv = preview();
   if (pv) {
