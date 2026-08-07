@@ -852,6 +852,33 @@ function pressOk() {
     const pvw = wallOffsetPreview(ui.flow);
     return commitItemAt(pvw.rect, ui.flow.draft, { wallId: ui.flow.wall.wallId, seg: ui.flow.wall.seg });
   }
+  if (ui.flow?.kind === 'record') {
+    const v = parseDistance(ui.fields[0]);
+    if (v == null) return say('Type the measured distance', 'warn');
+    const { p, q, measId } = ui.flow;
+    const [n1, n2] = [store.point(p)?.name, store.point(q)?.name];
+    const p1 = pos(p), p2 = pos(q);
+    if (p1 && p2) {
+      const predicted = Math.hypot(p2.x - p1.x, p2.y - p1.y);
+      const diff = Math.abs(v - predicted);
+      if (diff > 0.15 && ui.checkArm !== `flow:${v}`) {
+        ui.checkArm = `flow:${v}`;
+        return say(`${n1} to ${n2} currently solves to ${fmtDist(predicted)}, but you typed ${fmtDist(v)} - ${(diff * 100).toFixed(0)} cm apart. Typo or cm/m mix-up? Press OK again to keep it.`, 'err');
+      }
+    }
+    ui.checkArm = null;
+    if (measId != null) {
+      store.updateMeasurement(measId, v);
+      toast(`${n1}-${n2} updated to ${fmtDist(v)}`, 'good');
+      return endFlow(`${n1} to ${n2} updated to ${fmtDist(v)}`, 'good');
+    }
+    const id = store.addMeasurement(p, q, v);
+    const r = (store.solved.mres.get(id) || 0) * 100;
+    toast(`Check recorded (${r.toFixed(1)} cm)`, Math.abs(r) < 1 ? 'good' : Math.abs(r) < 3 ? 'warn' : 'err');
+    return endFlow(Math.abs(r) >= 3
+      ? `Recorded, but it disagrees by ${Math.abs(r).toFixed(1)} cm - points shifted to a compromise. Edit or delete it in data if it was wrong.`
+      : `${n1} to ${n2} recorded - residual ${r.toFixed(1)} cm`, Math.abs(r) < 1 ? 'good' : 'warn');
+  }
   if (ui.flow?.kind === 'edit-meas') {
     const v = parseDistance(ui.fields[0]);
     if (v == null) return say('Type the corrected distance', 'warn');
@@ -1521,6 +1548,9 @@ function fieldLabel(i) {
     const m = store.measurement(ui.flow.measId);
     return i === 0 ? `${store.point(m?.p)?.name ?? '?'} to ${store.point(m?.q)?.name ?? '?'}` : '';
   }
+  if (ui.flow?.kind === 'record') {
+    return i === 0 ? `${store.point(ui.flow.p)?.name ?? '?'} to ${store.point(ui.flow.q)?.name ?? '?'}` : '';
+  }
   if (ui.flow?.kind === 'room-height') return i === 0 ? 'ceiling height' : '';
   if (multiMode()) {
     const k = ui.multiD.length;
@@ -1545,7 +1575,7 @@ function fieldLabel(i) {
 function renderPanel() {
   const anchor = anchorMode();
   const oneField = ui.flow?.kind === 'item-walloffset' || ui.flow?.kind === 'edit-meas'
-    || ui.flow?.kind === 'room-height' || multiMode();
+    || ui.flow?.kind === 'record' || ui.flow?.kind === 'room-height' || multiMode();
   const noFields = ui.flow?.kind === 'item-side' || ui.flow?.kind === 'item-wallmount';
   const showKeypad = ui.mode === 'measure' || anchor || ui.flow;
   const showFields = showKeypad && !noFields;
@@ -2565,7 +2595,22 @@ const toggleWork = () => {
 $('show-work').addEventListener('click', toggleWork);
 $('show-work3d').addEventListener('click', toggleWork);
 
-$('check-btn').addEventListener('click', commitCheck);
+$('check-btn').addEventListener('click', () => {
+  if (ui.refs.length !== 2) return say('Tap 2 points to record a distance between them', 'warn');
+  if (offFloorRefs().length) return say('Both points must be on this floor (cross-floor laser shots are slant distances)', 'warn');
+  const typed = parseDistance(ui.fields[ui.active]) ?? parseDistance(ui.fields[0]);
+  if (typed != null) return commitCheck();
+  // Nothing typed yet: ask for the ONE distance this needs, and update
+  // in place when the pair is already measured (no silent duplicates).
+  const [p, q] = ui.refs;
+  const existing = store.state.measurements.find(
+    (m) => (m.p === p && m.q === q) || (m.p === q && m.q === p));
+  const [n1, n2] = ui.refs.map((id) => store.point(id).name);
+  startFlow({ kind: 'record', p, q, measId: existing?.id ?? null },
+    existing
+      ? `${n1} to ${n2} is currently ${fmtDist(existing.d)} - type the new value, OK updates it`
+      : `${n1} to ${n2}: type the measured distance, OK records it`);
+});
 $('stack-btn').addEventListener('click', stackRefs);
 $('unwall-btn').addEventListener('click', () => {
   const id = ui.refs[0];

@@ -530,6 +530,35 @@ assert(/disagrees|compromise/.test(chkStatus), 'post-commit message names the da
 await click('#undo');
 assert((await state()).measurements.length === 6, 'undo removes the bad check');
 
+// Record with nothing typed = a one-field flow; OK saves the single value.
+// A pair that already has a measurement gets UPDATED, not duplicated.
+await click('#check-btn');
+assert(await js(`window.app.ui.flow?.kind`) === 'record', 'empty record starts the one-distance flow');
+assert(await js(`document.querySelector('#field0 label').textContent`) === 'A to D', 'flow asks for the single distance, no 1-of-2');
+assert(await js(`[...document.querySelectorAll('.field')].filter(f => f.style.display !== 'none').length`) === 1, 'one field in the record flow');
+assert(/currently/.test(await js(`document.getElementById('status').textContent`)), 'existing value shown for an update');
+await keys(['3', '0', '0']);
+await key('ok');
+st = await state();
+assert(await js(`window.app.ui.flow`) === null, 'OK saves and ends the record flow');
+assert(st.measurements.length === 6, 'existing pair updated in place, not duplicated');
+// A pair with no measurement yet: OK records a new one.
+await js(`(() => {
+  const app = window.app, pts = app.store.state.points;
+  app.ui.refs = [pts[1].id, pts[3].id]; app.render();  // B, D: unmeasured pair
+})()`);
+await click('#check-btn');
+await keys(['4', '0', '0']);
+await key('ok');
+st = await state();
+assert(st.measurements.length === 7 && near(st.measurements.at(-1).d, 4.0), 'unmeasured pair gains the check');
+await click('#undo');
+assert((await state()).measurements.length === 6, 'record-flow check undoes');
+await js(`(() => {
+  const app = window.app, pts = app.store.state.points;
+  app.ui.refs = [pts[0].id, pts[3].id]; app.render();
+})()`);
+
 // --- items ------------------------------------------------------------------
 await click('#modebar [data-mode="item"]');
 await click('#item-new');
