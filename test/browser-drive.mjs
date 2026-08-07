@@ -208,7 +208,17 @@ assert(st.walls.length === 1 && st.walls[0].pts.length === 2, 'walling on seeds 
 assert(await js(`localStorage.getItem('house-measurer.walling')`) === 'on', 'walling choice persists');
 
 // C measured in perimeter order (refs kept as A, B): 4.27 m and 2.50 m.
+// Entry is one box at a time now: OK advances, del on empty steps back.
+await settleFrame();
+assert(await js(`[...document.querySelectorAll('.field')].filter(f => f.style.display !== 'none').length`) === 1, 'a single input field shows');
+assert(/1 of 2/.test(await js(`document.querySelector('#field0 label').textContent`)), 'first distance labelled 1 of 2');
 await keys(['4', '2', '7']);
+await key('ok');
+assert(await js('window.app.ui.active') === 1, 'OK advances to the second distance');
+assert(/2 of 2/.test(await js(`document.querySelector('#field1 label').textContent`)), 'second distance labelled 2 of 2');
+assert(await js(`document.getElementById('field0').style.display`) === 'none', 'first box hidden while entering the second');
+await key('del');
+assert(await js('window.app.ui.active') === 0 && await js('window.app.ui.fields[0]') === '427', 'del on the empty second box steps back with the value intact');
 await key('ok');
 await keys(['2', '5', '0']);
 await shot('03-candidates');

@@ -757,7 +757,8 @@ function pressKey(key) {
         const popped = ui.multiD.pop();
         return say(`Removed ${fmtDist(popped)} - shoot ${store.point(ui.refs[ui.multiD.length])?.name} again`, 'warn');
       }
-      f[ui.active] = f[ui.active].slice(0, -1);
+      if (!f[ui.active] && ui.active === 1) ui.active = 0; // step back a field
+      else f[ui.active] = f[ui.active].slice(0, -1);
     }
   }
 
@@ -1503,7 +1504,7 @@ function fieldLabel(i) {
     return `height (${Math.round(h1 * 100)}${h1 !== h2 ? '/' + Math.round(h2 * 100) : ''})`;
   }
   const id = ui.refs[i];
-  return id ? `to ${store.point(id).name}` : `to ref ${i + 1}`;
+  return `${id ? `to ${store.point(id).name}` : `to ref ${i + 1}`} (${i + 1} of 2)`;
 }
 
 function renderPanel() {
@@ -1527,7 +1528,12 @@ function renderPanel() {
   }
 
   if (showFields) {
-    $('field1').style.display = anchor || oneField ? 'none' : '';
+    // One box at a time, always: two-value entries walk through their
+    // fields sequentially (OK advances, del on an empty box steps back)
+    // instead of showing a pair of boxes for one or two values.
+    const single = anchor || oneField;
+    $('field0').style.display = single || ui.active === 0 ? '' : 'none';
+    $('field1').style.display = !single && ui.active === 1 ? '' : 'none';
     for (const i of [0, 1]) {
       const el = $(`field${i}`);
       el.classList.toggle('active', ui.active === i);
