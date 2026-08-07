@@ -62,11 +62,10 @@
         <button id="check-btn" title="record the typed distance between the two selected points">record</button>
         <button id="stack-btn" style="display:none" title="pin the selected point(s) onto this floor, directly above">stack here</button>
         <button id="del-point" style="display:none" title="delete the selected point">delete</button>
+        <button id="flip-btn" style="display:none" title="mirror this point to its other candidate position"></button>
         <button id="unwall-btn" style="display:none" title="take this point out of the wall outline (it stays as a reference)">unwall</button>
-        <button id="pause-btn" style="display:none" title="pause wall auto-chaining to place reference-only points"></button>
       </div>
       <div id="laserbar" style="display:none">
-        <button id="auto-btn" title="laser auto mode: readings advance and commit points by themselves"></button>
         <button id="shoot-btn" title="trigger a shake-free measurement from here (arms the laser, then fires)">shoot</button>
       </div>
       <div id="fields">
@@ -76,6 +75,7 @@
       <div id="wallbar">
         <button id="wall-new">new wall</button>
         <button id="wall-back">step back</button>
+        <button id="pause-btn" style="display:none" title="chain new measured points into the wall outline as you go"></button>
       </div>
       <div id="movebar">
         <span id="sel-name" class="dim"></span>
@@ -126,6 +126,11 @@
     <div class="row">
       <button id="laser-connect">connect</button>
       <button id="laser-disconnect" class="danger" hidden>disconnect</button>
+    </div>
+    <div class="row">
+      <span class="log-name">auto survey mode: readings advance and commit points by themselves</span>
+      <span id="auto-pill" class="pill off">off</span>
+      <button id="auto-btn">turn on</button>
     </div>
     <div class="row">
       <span class="log-name">reference edge (read from the meter)</span>
@@ -180,10 +185,10 @@
     <h2>measuring</h2>
     <ol>
       <li>Mark two anchor points A and B (ideally corners) with tape. Measure A to B and type it in.</li>
-      <li>For every new point: tap 2 already-fixed points, type the measured distance to each, press OK. Two positions match - the marked one is placed; tap the other candidate or press flip if it is on the wrong side.</li>
+      <li>For every new point: tap 2 already-fixed points, type the measured distance to each, press OK. Two positions match - the marked one is placed; tap the other candidate, or press the <b>flip</b> button (next to the reference slots) if it landed on the wrong side.</li>
       <li>For a stronger fix, tap up to 4 references (spread apart as seen from where you stand - rays crossing at 60-120 degrees are ideal) and enter the distances one at a time. Extra distances average the laser noise down, expose a bad reading as a residual, and pick the correct side automatically.</li>
       <li>New points are <b>reference-only</b> by default (walling: off). Fix reference points around the space first - especially ones that can see what A and B cannot (through doorways, past corners) - then build each room in <b>walls</b> mode: tap the corners in order, tap the first again to close, and give the ceiling height.</li>
-      <li>Prefer chaining instead? Toggle <b>walling: on</b> and each new point links into the wall outline as you measure, until the room closes (turning it on before any outline exists starts the run at A-B). Fix a wrong link in walls mode with step back; if a reference point slipped into the outline, select it and press <b>unwall</b> - the loop reroutes past it and the point stays usable.</li>
+      <li>Prefer chaining instead? Toggle <b>walling: on</b> (in walls mode) and each new point links into the wall outline as you measure, until the room closes (turning it on before any outline exists starts the run at A-B). Fix a wrong link in walls mode with step back; if a reference point slipped into the outline, select it and press <b>unwall</b> - the loop reroutes past it and the point stays usable.</li>
       <li>Placed a point on the wrong side and only noticed later? Tap it so it is the only selected point and press <b>flip</b> - it mirrors to the other candidate and everything measured from it re-solves. If those dependents landed mirrored as well, press flip a second time and they mirror too.</li>
       <li>The <b>survey check</b> (the amber/red pill in the header when something needs attention, or the button in the data sheet) diagnoses problems in plain words - unsolved points, disagreeing measurements, weak fix angles - and lists the exact steps to fix each, including which existing point to shoot from for the strongest improvement.</li>
       <li>Extra check measurements (e.g. a room diagonal): select the 2 points, type the distance, press record. Every point is adjusted to best fit all measurements; disagreement shows as residuals, and a reading far off the current solution is challenged before it is accepted. Edit or delete any measurement in the data sheet. The <b>detail</b> button overlays the interior angle at every wall corner and, for a selected point, the circles it was fixed from; while typing a new point the proposed wall's corner angle previews live.</li>
@@ -193,11 +198,11 @@
     <h2>units</h2>
     <p>A number with a decimal point is metres, without is centimetres: <b>342</b> = 3.42 m, <b>3.42</b> = 3.42 m, <b>84</b> = 84 cm, <b>15.</b> = 15 m.</p>
     <h2>keys</h2>
-    <p>Drag to pan, pinch or scroll to zoom, double-tap empty plan to zoom in one-handed. Keyboard: digits, Enter = OK, Tab = other field, f = flip, Escape = cancel, ctrl+z undo.</p>
+    <p>Drag to pan, pinch or scroll to zoom, double-tap empty plan to zoom in one-handed. Keyboard: digits, Enter = OK, Tab = other field, f = flip/swap, Escape = cancel, ctrl+z undo.</p>
     <h2>bluetooth laser</h2>
     <p>Tap <b>laser</b> in the header to open the laser panel, then <b>connect</b> (Chrome, and the app must be on its https:// address or localhost). Each reading lands in the active field ready for OK. The panel also holds the remote-shoot offset and a log of recent protocol frames (copyable) so unknown meters can be given a decoder.</p>
     <p><b>Meter modes</b>: the meter's continuous mode streams into the app - the active field holds a rolling average (hand shake cancels out; re-aiming or pausing starts a fresh window), and the status line shows the sample count plus the meter's own min/max. Nothing commits until you press OK. Area and volume results are announced in the status line but never treated as distances.</p>
-    <p><b>Auto mode</b> (the <b>auto</b> toggle in the laser row, off by default): each laser reading advances the survey by itself. The number of selected references is the contract: with 2 selected, every pair of readings places a point; with 3 or 4 selected, every point takes that many readings and commits on the last one - then the next point begins automatically against the same references. The status line always names which reference to shoot next, and the phone buzzes: short tick = reading logged, triple = point placed, long = reading refused. A mis-fired shot is retracted with <b>del</b> (steps back one reading); Escape restarts the current fix. Every guard still applies: impossible pairs are refused with an explanation, flip swaps a wrong side, and undo unwinds anything.</p>
+    <p><b>Auto mode</b> (in the laser panel, off by default): each laser reading advances the survey by itself. The number of selected references is the contract: with 2 selected, every pair of readings places a point; with 3 or 4 selected, every point takes that many readings and commits on the last one - then the next point begins automatically against the same references. The status line always names which reference to shoot next, and the phone buzzes: short tick = reading logged, triple = point placed, long = reading refused. A mis-fired shot is retracted with <b>del</b> (steps back one reading); Escape restarts the current fix. Every guard still applies: impossible pairs are refused with an explanation, flip swaps a wrong side, and undo unwinds anything.</p>
     <p>The <b>shoot</b> button (Bosch meters) triggers a measurement remotely - the laser arms, then fires, with no button press to shake the aim. Remote readings measure from the device's FRONT edge, so a corrective offset (the body length, default 10 cm, adjustable in the laser panel) is added to match your usual back-edge readings. The device screen stays at 0 for remote shots - compare values in the app field instead. If the meter declines, the status says so. The <b>calibrate</b> button in the laser panel derives the offset from the meter itself: prop it still, press its measure button once, and the app fires a remote shot and reads the body length off the difference.</p>
     <p class="fine">Everything is saved on this device automatically. Export JSON from the log sheet for backup or to move devices.</p>
     <button id="coach-show">show guided tips again</button>

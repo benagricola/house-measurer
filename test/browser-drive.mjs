@@ -202,7 +202,11 @@ assert(await js(`localStorage.getItem('house-measurer.coach')`) === 'done', 'dis
 // Wall-first path for the rest of the suite: turn walling on - the run
 // gets seeded with the anchor pair.
 assert(await js(`document.getElementById('pause-btn').textContent`) === 'walling: off', 'walling reads off by default');
+await click('#modebar [data-mode="wall"]');
+await settleFrame();
+assert(await js(`document.getElementById('pause-btn').style.display`) !== 'none', 'walling toggle lives in walls mode');
 await click('#pause-btn');
+await click('#modebar [data-mode="measure"]');
 st = await state();
 assert(st.walls.length === 1 && st.walls[0].pts.length === 2, 'walling on seeds the run with A and B');
 assert(await js(`localStorage.getItem('house-measurer.walling')`) === 'on', 'walling choice persists');
@@ -229,10 +233,14 @@ let posC = await js('[...window.app.store.solved.pos][2][1]');
 assert(near(posC.x, 3.4620, 2e-3) && near(posC.y, 2.4996, 2e-3), `C at expected spot (${posC.x.toFixed(4)}, ${posC.y.toFixed(4)})`);
 assert(st.walls[0].pts.length === 3, 'C auto-chained into the wall run');
 
-await key('flip');
+await settleFrame();
+assert(await js(`document.querySelector('[data-key="flip"]').style.display`) === 'none', 'keypad swap key hidden outside flows');
+assert(await js(`document.getElementById('flip-btn').style.display`) !== 'none', 'flip button offered after a commit');
+assert(await js(`document.getElementById('flip-btn').textContent`) === 'flip C', 'flip button names its target');
+await click('#flip-btn');
 posC = await js('[...window.app.store.solved.pos][2][1]');
 assert(posC.y < 0, 'flip moves C to the other side');
-await key('flip');
+await click('#flip-btn');
 
 // D from A and C: 3.00 m and 2.81 m; commit by tapping the primary ghost.
 await tapPoint('B'); // refs [A,B] -> drop B
@@ -264,13 +272,14 @@ assert(st.points.length === 4 && st.walls[0].pts.length === 4, 'redo restores D 
 await tapPoint('A'); // refs [A,C] -> [C]
 refs = await js('window.app.ui.refs.map(id => window.app.store.point(id).name)');
 assert(refs.join(',') === 'C', `single selection for the late flip (${refs})`);
-await key('flip');
+assert(await js(`document.getElementById('flip-btn').textContent`) === 'flip C', 'flip button targets the selected point');
+await click('#flip-btn');
 let posCf = await js('[...window.app.store.solved.pos][2][1]');
 let posDf = await js('[...window.app.store.solved.pos][3][1]');
 assert(near(posCf.y, -2.4996, 2e-3), 'late flip mirrors C across the baseline');
 assert(Math.abs(posDf.y - 2.921) > 0.2, 'D re-solved from the moved C');
 assert(/press flip again/.test(await js(`document.getElementById('status').textContent`)), 'status offers mirroring the branch');
-await key('flip');
+await click('#flip-btn');
 posDf = await js('[...window.app.store.solved.pos][3][1]');
 assert(near(posDf.x, 0.684, 3e-3) && near(posDf.y, -2.921, 3e-3), 'second flip lands D at the exact reflection');
 await click('#undo');
@@ -480,6 +489,24 @@ await js(`[...document.querySelectorAll('#log-list [data-act="doctor"]')].at(0).
 assert(await js(`!document.getElementById('doctor-sheet').hidden`), 'survey check opens from the data sheet');
 assert(/No problems found/.test(await js(`document.getElementById('doctor-list').innerText`)), 'clean survey reports no problems');
 await click('#doctor-close');
+
+// A short drawn edge with no direct tie gets flagged (the slanted-stub
+// lesson: 9 cm between points fixed by metres-long shots).
+const ptsBeforeStub = (await state()).points.length;
+await js(`(() => {
+  const st = window.app.store, pts = st.state.points;
+  const p = st.addPoint(pts[0].id, pts[1].id, 2.0, 2.6, 1, {});
+  const q = st.addPoint(pts[0].id, pts[1].id, 2.08, 2.55, 1, {});
+  st.addWallPoint(null, p);
+  st.addWallPoint(st.state.walls.at(-1).id, q);
+  window.app.render();
+})()`);
+assert(await js(`!document.getElementById('health-pill').hidden`), 'short unmeasured edge raises the pill');
+await click('#health-pill');
+assert(/short edge/.test(await js(`document.getElementById('doctor-list').innerText`)), 'doctor prescribes a direct tie for the short edge');
+await click('#doctor-close');
+for (let i = 0; i < 4; i++) await click('#undo');
+assert((await state()).points.length === ptsBeforeStub, 'stub scenario unwound');
 await click('#log-btn');
 await click('#log-close');
 // The transient unsolve pruned D from the refs; re-select for the next test.
@@ -535,7 +562,7 @@ const [edx, edy] = [70 * iv.wpp, 40 * iv.wpp];
 assert(near(iv2.wx - iv.wx, edx, edx * 0.15) && near(iv2.wy - iv.wy, edy, edy * 0.15),
   `drag moved fridge by the drag delta (got ${(iv2.wx - iv.wx).toFixed(3)}, ${(iv2.wy - iv.wy).toFixed(3)})`);
 
-await key('flip');
+await js(`window.app.pressKey('flip')`); // keyboard 'f' path: rotate the item
 iv = await itemVp('fridge');
 assert(near(iv.rot, Math.PI / 2, 1e-6), 'flip rotates selected item 90 degrees');
 
@@ -584,6 +611,8 @@ assert(await js('window.app.ui.flow?.kind') === 'item-c2', 'corner-2 flow');
 await tapPoint('B');
 assert(await js('window.app.ui.flow?.kind') === 'item-side', 'tapped point accepted as corner 2');
 await shot('07-item-side-choice');
+assert(await js(`document.querySelector('[data-key="flip"]').style.display`) !== 'none', 'swap key appears in the side-choice flow');
+assert(await js(`document.querySelector('[data-key="flip"]').textContent`) === 'swap', 'keypad key reads swap');
 await key('flip');
 await key('ok');
 st = await state();
@@ -837,7 +866,9 @@ refs = await js('window.app.ui.refs.map(id => window.app.store.point(id).name)')
 assert(refs.join(',') === `${twins[0].name},${twins[1].name}`, `refs swapped to the twins (${refs})`);
 
 // Walling pause: a reference-only point commits without joining the run.
+await click('#modebar [data-mode="wall"]');
 await click('#pause-btn');
+await click('#modebar [data-mode="measure"]');
 await keys(['4', '2', '7']);
 await key('ok');
 await keys(['2', '5', '0']);
@@ -846,7 +877,9 @@ st = await state();
 assert(st.points.length === 7, 'paused commit still places the point');
 assert(st.walls.at(-1).pts.length === 2, 'paused point stays out of the wall run');
 await click('#undo');
+await click('#modebar [data-mode="wall"]');
 await click('#pause-btn'); // resume walling
+await click('#modebar [data-mode="measure"]');
 assert((await state()).points.length === 6, 'reference point undone for the walled retry');
 
 await keys(['4', '2', '7']);
@@ -964,6 +997,14 @@ assert(Math.abs(await js(`window.app.laser.remoteOffset`) - 0.095) < 1e-9, 'offs
 assert(await js(`[...document.querySelectorAll('#toasts .toast')].some(t => /9.5 cm/.test(t.textContent))`), 'offset change raises a toast');
 await js(`document.getElementById('laser-off').value = '10'`);
 await click('#laser-setlo');
+
+// Auto survey mode is configured here now.
+assert(await js(`document.getElementById('auto-pill').textContent`) === 'off', 'auto mode reads off in the laser panel');
+await click('#auto-btn');
+assert(await js(`window.app.ui.autoLaser === true`), 'auto toggles on from the panel');
+assert(await js(`document.getElementById('auto-pill').textContent`) === 'on', 'auto pill follows');
+await click('#auto-btn');
+assert(await js(`window.app.ui.autoLaser === false`), 'auto toggles back off');
 
 // Calibration: guarded without a meter, and the full flow with a stub.
 await click('#laser-cal');

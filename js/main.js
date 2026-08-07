@@ -358,6 +358,41 @@ function surveyIssues() {
     });
   }
 
+  // Tiny drawn edges whose ends were never tied directly: both ends were
+  // fixed by metres-long shots carrying millimetre noise, so their
+  // RELATIVE error is a large fraction of a short edge - the edge's
+  // angle swings wildly (1 cm across 9 cm is 6 degrees). A ruler tie
+  // pins the length; diagonals across the feature pin the angle.
+  const seenShort = new Set();
+  for (const wall of store.state.walls) {
+    const run = wall.closed ? [...wall.pts, wall.pts[0]] : wall.pts;
+    for (let i = 0; i + 1 < run.length; i++) {
+      const a = run[i], b = run[i + 1];
+      const key = a < b ? `${a}:${b}` : `${b}:${a}`;
+      if (seenShort.has(key)) continue;
+      seenShort.add(key);
+      const pa = pos(a), pb = pos(b);
+      if (!pa || !pb) continue;
+      const d = Math.hypot(pb.x - pa.x, pb.y - pa.y);
+      if (d <= 0 || d >= 0.45) continue;
+      const direct = store.state.measurements.some(
+        (m) => (m.p === a && m.q === b) || (m.p === b && m.q === a));
+      if (direct) continue;
+      const na = store.point(a)?.name, nb = store.point(b)?.name;
+      issues.push({
+        sev: 'warn',
+        title: `${na}-${nb}: short edge (${(d * 100).toFixed(0)} cm) with no direct measurement`,
+        body: 'An edge this short inherits the relative error of two long fixes, so its angle is unreliable - it will draw slanted even when the real corners are square. Measure it directly with a ruler or tape; for a protrusion, also record the two diagonals across it.',
+        steps: [
+          `Measure ${na} to ${nb} directly.`,
+          'Tap the button below (it selects the pair), type the value, press record.',
+        ],
+        selectIds: [a, b],
+      });
+      if (issues.length > 12) break;
+    }
+  }
+
   return issues;
 }
 
@@ -802,7 +837,7 @@ function pressFlip() {
         : ''}`, 'good');
     }
   }
-  if (ui.lastId && store.point(ui.lastId)?.fix) store.flipSide(ui.lastId);
+  if (ui.lastId && store.point(ui.lastId)?.fix?.side != null) store.flipSide(ui.lastId);
 }
 
 function pressOk() {
@@ -1562,19 +1597,22 @@ function renderPanel() {
     $('check-btn').style.display = ui.refs.length === 2 && !ui.flow && !offFloorRefs().length ? '' : 'none';
     $('stack-btn').style.display = !ui.flow && offFloorRefs().length ? '' : 'none';
     $('del-point').style.display = ui.mode === 'measure' && !ui.flow && ui.refs.length === 1 ? '' : 'none';
+    const selFlip = ui.refs.length === 1 && store.point(ui.refs[0])?.fix?.side != null ? ui.refs[0] : null;
+    const lastFlip = ui.refs.length !== 1 && ui.lastId && store.point(ui.lastId)?.fix?.side != null ? ui.lastId : null;
+    const flipTarget = ui.mode === 'measure' && !ui.flow ? (selFlip ?? lastFlip) : null;
+    $('flip-btn').style.display = flipTarget ? '' : 'none';
+    if (flipTarget) $('flip-btn').textContent = `flip ${store.point(flipTarget).name}`;
     const selPt = ui.refs.length === 1 ? ui.refs[0] : null;
     const inWall = selPt != null && store.state.walls.some((w) => w.pts.includes(selPt));
     $('unwall-btn').style.display = ui.mode === 'measure' && !ui.flow && inWall ? '' : 'none';
-    const autoWalling = !anchorMode() && !store.hasClosedRoomOn(activeFloor());
-    $('pause-btn').style.display = ui.mode === 'measure' && !ui.flow && autoWalling ? '' : 'none';
-    $('pause-btn').textContent = ui.wallPause ? 'walling: off' : 'walling: on';
-    $('pause-btn').classList.toggle('on', !ui.wallPause);
   }
-  // Laser controls live on their own row so shoot never falls off a
-  // small screen behind the wrapping refbar.
-  $('laserbar').style.display = laser.connected && ui.mode === 'measure' && !ui.flow ? '' : 'none';
-  $('auto-btn').textContent = `auto: ${ui.autoLaser === true ? 'on' : 'off'}`;
-  $('auto-btn').classList.toggle('on', ui.autoLaser === true);
+  const autoWalling = !anchorMode() && !store.hasClosedRoomOn(activeFloor());
+  $('pause-btn').style.display = ui.mode === 'wall' && !ui.flow && autoWalling ? '' : 'none';
+  $('pause-btn').textContent = ui.wallPause ? 'walling: off' : 'walling: on';
+  $('pause-btn').classList.toggle('on', !ui.wallPause);
+  // The shoot row exists only when the meter can actually be triggered;
+  // auto survey mode is configured in the laser panel.
+  $('laserbar').style.display = laser.canTrigger && ui.mode === 'measure' && !ui.flow ? '' : 'none';
   $('shoot-btn').style.display = laser.canTrigger ? '' : 'none';
   // "close room" appears while a wall run with 3+ points is waiting.
   const open = store.openWall();
@@ -1615,15 +1653,17 @@ function renderPanel() {
     if (!store.state.items.length) list.innerHTML = '<div class="dim" style="padding:6px">no items yet</div>';
   }
 
-  const flip = document.querySelector('[data-key="flip"]');
-  if (flip) {
-    flip.disabled = !(
-      ui.flow?.kind === 'item-side' || ui.flow?.kind === 'item-walloffset' ||
-      (twoFieldFlow() && ui.flow && preview()?.cands) ||
-      (ui.mode === 'move' && ui.selItem && !store.item(ui.selItem)?.locked) ||
-      (ui.mode === 'measure' && !ui.flow && ui.refs.length === 1 && store.point(ui.refs[0])?.fix?.side != null) ||
-      (ui.mode === 'measure' && !ui.flow && ui.lastId && store.point(ui.lastId)?.fix)
-    );
+  // The keypad key is purely a candidate/side SWAP inside placement
+  // flows; flipping a measured point is an action on that point and
+  // lives next to delete in the refbar instead.
+  const flipKey = document.querySelector('[data-key="flip"]');
+  const zeroKey = document.querySelector('[data-key="0"]');
+  if (flipKey) {
+    const flowSwap = ui.flow?.kind === 'item-side' || ui.flow?.kind === 'item-walloffset' ||
+      ((ui.flow?.kind === 'item-c1' || ui.flow?.kind === 'item-c2') && preview()?.cands);
+    flipKey.style.display = flowSwap ? '' : 'none';
+    flipKey.disabled = !flowSwap;
+    if (zeroKey) zeroKey.style.gridArea = flowSwap ? '4 / 2' : '4 / 2 / 5 / 4';
   }
 
   // Status line.
@@ -2151,7 +2191,7 @@ function surveyViz() {
 const COACH_TIPS = [
   'The baseline: tape two marks (A and B) at either end of a straight wall, measure between them with the laser, type it in. Every other point gets fixed by distances back to points like these.',
   'Reference points first: new points are reference-only while walling is off. Fix a few spread around the space - especially ones that can see what A and B cannot (through doorways, past corners). Rays crossing near 90 degrees make the strongest fixes.',
-  'Build the outline: in walls mode tap the corner points in order, and tap the first corner again to close the room (the ceiling height is asked once closed). Or turn walling: on and new points chain into the outline as you measure them.',
+  'Build the outline: in walls mode tap the corner points in order, and tap the first corner again to close the room (the ceiling height is asked once closed). Or toggle walling: on (also in walls mode) and new points chain into the outline as you measure them.',
   'Tighten it: select two points, type a measured distance, press record. Disagreement shows up as residuals, and the detail button reveals wall angles and weak fixes. That is the whole loop - references, corners, checks.',
 ];
 
@@ -2201,7 +2241,7 @@ function buildKeypad() {
     ['1', '1', '1/1'], ['2', '2', '1/2'], ['3', '3', '1/3'], ['del', 'del', '1/4/3/5'],
     ['4', '4', '2/1'], ['5', '5', '2/2'], ['6', '6', '2/3'],
     ['7', '7', '3/1'], ['8', '8', '3/2'], ['9', '9', '3/3'], ['ok', 'OK', '3/4/5/5'],
-    ['.', '.', '4/1'], ['0', '0', '4/2'], ['flip', 'flip', '4/3'],
+    ['.', '.', '4/1'], ['0', '0', '4/2'], ['flip', 'swap', '4/3'],
   ];
   const pad = $('keypad');
   for (const [key, label, area] of keys) {
@@ -2370,6 +2410,9 @@ function renderLaser() {
   $('laser-disconnect').hidden = !on;
   const off = $('laser-off');
   if (document.activeElement !== off) off.value = (laser.remoteOffset * 100).toFixed(1);
+  $('auto-pill').className = 'pill ' + (ui.autoLaser === true ? 'on' : 'off');
+  $('auto-pill').textContent = ui.autoLaser === true ? 'on' : 'off';
+  $('auto-btn').textContent = ui.autoLaser === true ? 'turn off' : 'turn on';
   const ref = laser.deviceRef;
   const refEl = $('laser-ref');
   refEl.textContent = ref === 'back' ? 'back edge' : ref === 'front' ? 'front edge'
@@ -2545,8 +2588,11 @@ $('pause-btn').addEventListener('click', () => {
     : 'Walling on: new points chain into the wall outline until the room closes');
 });
 $('shoot-btn').addEventListener('click', () => laser.remoteTrigger());
+$('flip-btn').addEventListener('click', () => pressFlip());
 $('auto-btn').addEventListener('click', () => {
   ui.autoLaser = ui.autoLaser !== true;
+  if (!$('laser-sheet').hidden) renderLaser();
+  toast(ui.autoLaser ? 'Auto survey mode on' : 'Auto survey mode off', 'good');
   say(ui.autoLaser
     ? 'Auto on: shoot ref 1, shoot ref 2, point placed - repeat around the room'
     : 'Auto off: laser readings fill the field, you press OK');
