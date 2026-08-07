@@ -157,6 +157,14 @@ header button:disabled { opacity: 0.35; }
   font-variant-numeric: tabular-nums;
 }
 .lbl.ghost { font-size: 12px; font-weight: 600; color: var(--teal); }
+.lbl.aim {
+  font-size: 11.5px;
+  font-weight: 700;
+  color: #fff;
+  background: var(--amber);
+  padding: 2px 7px;
+  border-radius: 99px;
+}
 .lbl.ghost.dim { opacity: 0.55; font-weight: 400; }
 .lbl.ang {
   font-size: 11px;
@@ -345,6 +353,9 @@ header button:disabled { opacity: 0.35; }
   font-weight: 700;
 }
 .key.ok:active { background: var(--ok-press); }
+/* OK doubles as the laser trigger while no value is typed. */
+.key.ok.shoot { background: var(--amber); border-color: var(--amber); }
+.key.ok.shoot:active { filter: brightness(0.9); }
 
 /* ---- 3D view ---- */
 #view3d-wrap {

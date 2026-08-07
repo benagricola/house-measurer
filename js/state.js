@@ -310,6 +310,19 @@ export class Store {
     return id;
   }
 
+  // A short free-text note on a point ("radiator corner", "left reveal").
+  // Marks in the room are often unlabelled; this is how a point stays
+  // identifiable days later.
+  setPointNote(id, note) {
+    const txt = String(note ?? '').trim().slice(0, 60);
+    this.commit((s) => {
+      const p = s.points.find((x) => x.id === id);
+      if (!p) return;
+      if (txt) p.note = txt;
+      else delete p.note;
+    });
+  }
+
   flipSide(id) {
     const pt = this.point(id);
     if (!pt || !pt.fix) return;

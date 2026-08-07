@@ -421,6 +421,26 @@ function validateUi() {
   if (ui.activeWallId && !store.wall(ui.activeWallId)) ui.activeWallId = null;
 }
 
+// With a triggerable meter connected and nothing typed yet, the primary
+// key fires the laser instead of committing - one thumb position for
+// shoot, shoot, commit, so aim never has to be broken to hunt a button.
+// Only where an empty OK has no other meaning (flows that treat empty as
+// "keep current" keep their OK).
+function okIsShoot() {
+  if (!laser.canTrigger) return false;
+  if (ui.fields[ui.active]) return false;
+  if (ui.flow && ui.flow.kind !== 'record') return false;
+  return ui.mode === 'measure' || anchorMode();
+}
+
+// The point the next reading should be aimed at, so the app can say and
+// show WHICH mark to shoot rather than leaving it to memory.
+function aimTarget() {
+  if (!ui.refs.length || ui.mode !== 'measure' || ui.flow || anchorMode()) return null;
+  const id = multiMode() ? ui.refs[ui.multiD.length] : ui.refs[ui.active];
+  return id != null && pos(id) ? id : null;
+}
+
 // Multi-reference fixing: past the first two refs, distances are entered
 // one at a time into ui.multiD.
 const multiMode = () =>
@@ -817,7 +837,7 @@ function pressKey(key) {
   }
 
   if (key === 'flip') return pressFlip();
-  if (key === 'ok') return pressOk();
+  if (key === 'ok') return okIsShoot() ? laser.remoteTrigger() : pressOk();
   render();
 }
 
@@ -1313,6 +1333,24 @@ function renderLog() {
     });
   }
 
+  section('points');
+  if (!store.state.points.length) addRow('<span class="dim">none yet</span>');
+  else {
+    addRow('<span class="log-name">point</span><span class="log-val">note (what it is)</span>', 'log-cols');
+    for (const pt of store.state.points) {
+      const fl = store.floor(pt.floor);
+      const row = addRow(
+        `<span class="log-name"><b>${pt.name}</b>${fl && pt.floor !== activeFloor() ? ` <span class="dim">${fl.name}</span>` : ''}</span>` +
+        `<input data-act="note" placeholder="e.g. left window reveal" value="${(pt.note ?? '').replace(/"/g, '&quot;')}">`
+      );
+      const input = row.querySelector('[data-act="note"]');
+      input.addEventListener('change', () => {
+        store.setPointNote(pt.id, input.value);
+        toast(input.value.trim() ? `${pt.name}: ${input.value.trim()}` : `${pt.name} note cleared`, 'good');
+      });
+    }
+  }
+
   const unsolved = unsolvedPoints(false);
   if (unsolved.length) {
     section('unsolved points');
@@ -1710,6 +1748,12 @@ function renderPanel() {
   // The keypad key is purely a candidate/side SWAP inside placement
   // flows; flipping a measured point is an action on that point and
   // lives next to delete in the refbar instead.
+  const okKey = document.querySelector('[data-key="ok"]');
+  if (okKey) {
+    const shoot = okIsShoot();
+    okKey.textContent = shoot ? 'shoot' : 'OK';
+    okKey.classList.toggle('shoot', shoot);
+  }
   const flipKey = document.querySelector('[data-key="flip"]');
   const zeroKey = document.querySelector('[data-key="0"]');
   if (flipKey) {
@@ -1742,8 +1786,9 @@ function renderPanel() {
     else if (ui.refs.length < 2) msg = { text: 'Tap 2 reference points on the plan', cls: '' };
     else if (multiMode()) {
       const k = ui.multiD.length;
+      const t = store.point(ui.refs[k]);
       msg = {
-        text: `Multi-fix: distance ${k + 1} of ${ui.refs.length}, to ${store.point(ui.refs[k])?.name} - side picks itself from the extras`,
+        text: `Multi-fix: distance ${k + 1} of ${ui.refs.length}, aim at ${t?.name}${t?.note ? ` (${t.note})` : ''} - side picks itself from the extras`,
         cls: '',
       };
     }
@@ -1754,7 +1799,11 @@ function renderPanel() {
       } else if (pv && pv.cands) {
         msg = { text: 'OK places the marked candidate - or tap the other one', cls: '' };
       } else {
-        msg = { text: `Type distances to ${store.point(ui.refs[0]).name} and ${store.point(ui.refs[1]).name}`, cls: '' };
+        const t = store.point(ui.refs[ui.active]);
+        const verb = laser.canTrigger ? 'Shoot' : 'Measure';
+        msg = t
+          ? { text: `${verb} ${t.name}${t.note ? ` (${t.note})` : ''} - distance ${ui.active + 1} of 2`, cls: '' }
+          : { text: `Type distances to ${store.point(ui.refs[0]).name} and ${store.point(ui.refs[1]).name}`, cls: '' };
       }
     }
   }
@@ -1787,7 +1836,7 @@ function renderPanel() {
 }
 
 function renderPlan() {
-  const content = { points: [], segments: [], circles: [], ghosts: [], rects: [], polygons: [], handles: [], labels: [] };
+  const content = { points: [], segments: [], circles: [], ghosts: [], rects: [], polygons: [], handles: [], aims: [], labels: [] };
   const pts = store.state.points;
 
   if (anchorMode()) {
@@ -1979,6 +2028,28 @@ function renderPlan() {
     content.points.push({ x: u.p.x, y: u.p.y, style: 'error' });
     content.labels.push({ key: `up${u.pt.id}`, x: u.p.x, y: u.p.y, text: `${u.pt.name}?`, cls: 'name', dy: -18 });
     content.labels.push({ key: `ue${u.pt.id}`, x: u.p.x, y: u.p.y, text: `unsolved: ${u.reason}`, cls: 'res err', dy: 15 });
+  }
+
+  // Aim marker: an unmistakable ring on the point the next shot is for,
+  // with its note when it has one - marks in the room are often
+  // unlabelled, and by point S nobody remembers which is which.
+  const aimId = aimTarget();
+  if (aimId != null) {
+    const ap = pos(aimId);
+    const apt = store.point(aimId);
+    content.aims.push({ x: ap.x, y: ap.y });
+    content.labels.push({
+      key: 'aim', x: ap.x, y: ap.y, dy: 32,
+      text: apt.note ? `aim here: ${apt.note}` : 'aim here', cls: 'aim',
+    });
+    // Keep the target on screen without fighting the user's panning:
+    // only reframe when the target itself changes.
+    if (renderPlan.lastAim !== aimId) {
+      renderPlan.lastAim = aimId;
+      if (!plan.isOnScreen(ap.x, ap.y)) plan.fitAll([...store.solved.pos.values()]);
+    }
+  } else {
+    renderPlan.lastAim = null;
   }
 
   // Two-distance preview (points and item corners).
@@ -2213,6 +2284,16 @@ function surveyViz() {
     viz.labels.push({ key: `up${u.pt.id}`, x: u.p.x, y: u.p.y, z: activeE + 0.55, text: `${u.pt.name}?`, cls: 'name' });
     viz.labels.push({ key: `ue${u.pt.id}`, x: u.p.x, y: u.p.y, z: activeE + 0.32, text: `unsolved: ${u.reason}`, cls: 'res err' });
   }
+  const aimId3 = aimTarget();
+  if (aimId3 != null) {
+    const ap = pos(aimId3);
+    const apt = store.point(aimId3);
+    const ae = elev(apt.floor);
+    viz.labels.push({
+      key: 'aim', x: ap.x, y: ap.y, z: ae + 0.95,
+      text: apt.note ? `aim here: ${apt.note}` : 'aim here', cls: 'aim',
+    });
+  }
   const pv = preview();
   if (pv) {
     const [r1, r2] = ui.refs.map(pos);
@@ -2278,6 +2359,8 @@ function render() {
   validateUi();
   renderPanel();
   renderCoach();
+  // The dot stays lit exactly while a reading is expected.
+  if (okIsShoot()) laser.aimStart(); else laser.aimStop();
   if (ui.view === '3d') {
     if (view3d) view3d.build(store.state, store.solved, visibleLayers(), surveyViz());
   } else {
@@ -2464,6 +2547,9 @@ function renderLaser() {
   $('laser-disconnect').hidden = !on;
   const off = $('laser-off');
   if (document.activeElement !== off) off.value = (laser.remoteOffset * 100).toFixed(1);
+  $('aim-pill').className = 'pill ' + (laser.aimEnabled ? 'on' : 'off');
+  $('aim-pill').textContent = laser.aimEnabled ? 'on' : 'off';
+  $('aim-btn').textContent = laser.aimEnabled ? 'turn off' : 'turn on';
   $('auto-pill').className = 'pill ' + (ui.autoLaser === true ? 'on' : 'off');
   $('auto-pill').textContent = ui.autoLaser === true ? 'on' : 'off';
   $('auto-btn').textContent = ui.autoLaser === true ? 'turn off' : 'turn on';
@@ -2503,6 +2589,14 @@ $('laser-setlo').addEventListener('click', () => {
   } else {
     toast('Offset must be between 0 and 50 cm', 'warn');
   }
+});
+$('aim-btn').addEventListener('click', () => {
+  laser.aimEnabled = !laser.aimEnabled;
+  try { localStorage.setItem('house-measurer.laserAim', laser.aimEnabled ? 'on' : 'off'); } catch {}
+  if (!laser.aimEnabled) laser.aimStop();
+  toast(laser.aimEnabled ? 'Laser dot held on while aiming' : 'Laser dot keep-alive off', 'good');
+  renderLaser();
+  render();
 });
 $('laser-copy').addEventListener('click', async () => {
   try {
@@ -2567,6 +2661,7 @@ $('laser-cal').addEventListener('click', () => {
 try {
   const lo = parseFloat(localStorage.getItem('house-measurer.laserOffset'));
   if (isFinite(lo) && lo >= 0 && lo < 0.5) laser.remoteOffset = lo;
+  laser.aimEnabled = localStorage.getItem('house-measurer.laserAim') !== 'off';
 } catch {}
 
 buildKeypad();

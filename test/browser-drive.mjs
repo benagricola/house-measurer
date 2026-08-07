@@ -414,6 +414,17 @@ const logText = await js(`document.getElementById('log-list').innerText`);
 assert(logText.includes('B to D'), 'data sheet lists the check measurement');
 assert(!/laser/i.test(logText), 'laser section moved out of the data sheet');
 assert(/between/i.test(logText) && /measured/i.test(logText) && /error/i.test(logText), 'measurements table has column headings');
+assert(/note \(what it is\)/i.test(logText), 'data sheet has a points section with notes');
+{
+  const noted = await js(`(() => {
+    const inp = document.querySelectorAll('#log-list input[data-act="note"]')[2];
+    inp.value = 'chimney corner';
+    inp.dispatchEvent(new Event('change'));
+    return window.app.store.state.points[2].note;
+  })()`);
+  assert(noted === 'chimney corner', `note saved from the data sheet (${noted})`);
+  await js(`window.app.store.undo()`);
+}
 assert(await js(`!!document.getElementById('laser-btn')`), 'laser button present in header');
 assert(await js(`document.getElementById('shoot-btn').style.display`) === 'none', 'shoot hidden without a triggerable meter');
 // The data card is centred, not a bottom sheet running off-screen.
@@ -1074,6 +1085,53 @@ await js(`window.app.laser.cb.onMeasurement(2.527, { kind: 'remote', raw: 2.427 
 assert(await js(`window.app.ui.laserCal`) === null, 'calibration completes');
 assert(Math.abs(await js(`window.app.laser.remoteOffset`) - 0.1) < 1e-9, 'body length derived from push-minus-raw (100 mm)');
 assert(await js(`[...document.querySelectorAll('#toasts .toast')].some(t => /Calibrated: body length 100.0 mm/.test(t.textContent))`), 'calibration announces the measured body length');
+
+// OK doubles as the laser trigger while the field is empty, and the app
+// marks which point to aim at (with its note when it has one).
+await js(`window.app.setMode('measure')`);
+await js(`(() => {
+  const app = window.app, pts = app.store.state.points;
+  app.store.setPointNote(pts[0].id, 'left window reveal');
+  app.ui.refs = [pts[0].id, pts[1].id];
+  app.ui.fields = ['', ''];
+  app.ui.active = 0;
+  app.render();
+})()`);
+assert(await js(`document.querySelector('[data-key="ok"]').textContent`) === 'shoot', 'OK becomes shoot with a meter connected and nothing typed');
+assert(await js(`document.querySelector('[data-key="ok"]').classList.contains('shoot')`), 'shoot styling applied');
+{
+  const stat = await js(`document.getElementById('status').textContent`);
+  assert(/Shoot A/.test(stat) && /left window reveal/.test(stat), `status names the mark and its note (${stat.slice(0, 60)})`);
+}
+await settleFrame();
+{
+  const lbls = await js(`[...document.querySelectorAll('#overlay .lbl.aim')].map(l => l.textContent)`);
+  assert(lbls.length === 1 && /aim here: left window reveal/.test(lbls[0]), `aim marker names the target (${lbls})`);
+}
+// The dot is held on while the reading is expected, so aiming does not
+// need the meter's own button.
+assert(await js(`window.app.laser.aiming === true`), 'aim keep-alive runs while a reading is expected');
+// Pressing it fires the meter instead of committing.
+await js(`window.app.laser._fired = 0; window.app.laser.remoteTrigger = async () => { window.app.laser._fired++; }`);
+await key('ok');
+assert(await js(`window.app.laser._fired`) === 1, 'the shoot key triggers the meter');
+assert(await js(`window.app.ui.active`) === 0, 'shooting does not advance the field');
+// A typed digit turns it back into a commit key.
+await key('2');
+assert(await js(`document.querySelector('[data-key="ok"]').textContent`) === 'OK', 'OK returns once a value is typed');
+assert(await js(`window.app.laser.aiming === false`), 'a typed value stops the keep-alive');
+await key('del');
+assert(await js(`document.querySelector('[data-key="ok"]').textContent`) === 'shoot', 'and back to shoot when cleared');
+assert(await js(`window.app.laser.aiming === true`), 'clearing the field resumes the dot');
+// The keep-alive can be switched off in the laser panel.
+await click('#laser-btn');
+assert(await js(`document.getElementById('aim-pill').textContent`) === 'on', 'panel shows the keep-alive on');
+await click('#aim-btn');
+assert(await js(`window.app.laser.aimEnabled === false && window.app.laser.aiming === false`), 'panel toggle stops the dot');
+assert(await js(`localStorage.getItem('house-measurer.laserAim')`) === 'off', 'keep-alive preference persists');
+await click('#aim-btn');
+await click('#laser-close');
+await js(`(() => { const app = window.app; app.ui.refs = []; app.ui.fields = ['','']; app.render(); })()`);
 
 // With a meter connected, shoot lives on its own row - big and fully on
 // screen at phone width (it used to fall off the wrapping refbar).

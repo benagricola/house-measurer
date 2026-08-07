@@ -8,6 +8,7 @@
 //   rects:    [{x, y, rot, w, d, color, opacity, halo}],   // items
 //   polygons: [{pts: [{x,y}...], color, opacity}],          // room fill
 //   handles:  [{x, y}],                                     // rotate handle
+//   aims:     [{x, y}],                                     // shoot-at-me ring
 //   labels:   [{key, x, y, text, cls, dx, dy}],
 // }
 
@@ -262,6 +263,17 @@ export class PlanView {
         const ring = new THREE.Mesh(this.geoThinRing, this.mat('mesh', COLORS.lastRing));
         ring.position.set(p.x, p.y, 1.1);
         ring.scale.set(r + 5 * s, r + 5 * s, 1);
+        this.group.add(ring);
+      }
+    }
+
+    // Aim marker: two concentric rings, deliberately larger than any
+    // other point decoration so the target reads at a glance.
+    for (const a of c.aims || []) {
+      for (const [r, op] of [[20, 0.95], [30, 0.5]]) {
+        const ring = new THREE.Mesh(this.geoThinRing, this.mat('mesh', COLORS.refRing, op));
+        ring.position.set(a.x, a.y, 1.15);
+        ring.scale.set(r * s, r * s, 1);
         this.group.add(ring);
       }
     }

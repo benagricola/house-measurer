@@ -128,6 +128,11 @@
       <button id="laser-disconnect" class="danger" hidden>disconnect</button>
     </div>
     <div class="row">
+      <span class="log-name">hold the laser dot on while a reading is expected (so you can aim without waking the meter by hand)</span>
+      <span id="aim-pill" class="pill on">on</span>
+      <button id="aim-btn">turn off</button>
+    </div>
+    <div class="row">
       <span class="log-name">auto survey mode: readings advance and commit points by themselves</span>
       <span id="auto-pill" class="pill off">off</span>
       <button id="auto-btn">turn on</button>
@@ -200,6 +205,9 @@
     <h2>keys</h2>
     <p>Drag to pan, pinch or scroll to zoom, double-tap empty plan to zoom in one-handed. Keyboard: digits, Enter = OK, Tab = other field, f = flip/swap, Escape = cancel, ctrl+z undo.</p>
     <h2>bluetooth laser</h2>
+    <p>With a Bosch meter connected the <b>OK</b> key becomes <b>shoot</b> whenever the field is empty: aim, press it, the reading lands, press again (now OK) to commit. One thumb position for the whole cycle - no hunting for a separate button while holding aim. Type a digit and it reverts to OK.</p>
+    <p>Whenever a reading is expected the app also keeps the meter's laser dot lit (re-arming it every few seconds), so you can aim before shooting instead of waking the meter with its own button and losing the aim. Because the meter is already armed, the shot fires immediately. The dot parks itself after a few idle minutes, and the keep-alive can be turned off in the laser panel.</p>
+    <p>While you are entering distances the app marks the target: a ring on the plan and 3D labelled <b>aim here</b>, and the status line names the mark. Give points a note in the data sheet (<b>points</b> section - "left window reveal", "radiator corner") and it shows up in both, so an unmarked point is still identifiable days later. Point names never run out: after Z they continue AA, AB ... ZZ, AAA.</p>
     <p>Tap <b>laser</b> in the header to open the laser panel, then <b>connect</b> (Chrome, and the app must be on its https:// address or localhost). Each reading lands in the active field ready for OK. The panel also holds the remote-shoot offset and a log of recent protocol frames (copyable) so unknown meters can be given a decoder.</p>
     <p><b>Meter modes</b>: the meter's continuous mode streams into the app - the active field holds a rolling average (hand shake cancels out; re-aiming or pausing starts a fresh window), and the status line shows the sample count plus the meter's own min/max. Nothing commits until you press OK. Area and volume results are announced in the status line but never treated as distances.</p>
     <p><b>Auto mode</b> (in the laser panel, off by default): each laser reading advances the survey by itself. The number of selected references is the contract: with 2 selected, every pair of readings places a point; with 3 or 4 selected, every point takes that many readings and commits on the last one - then the next point begins automatically against the same references. The status line always names which reference to shoot next, and the phone buzzes: short tick = reading logged, triple = point placed, long = reading refused. A mis-fired shot is retracted with <b>del</b> (steps back one reading); Escape restarts the current fix. Every guard still applies: impossible pairs are refused with an explanation, flip swaps a wrong side, and undo unwinds anything.</p>

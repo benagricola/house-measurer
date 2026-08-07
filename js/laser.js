@@ -200,6 +200,11 @@ export class LaserLink {
     // exactly 100 mm on a UniversalDistance 50C. Adjustable in the data
     // sheet; applied to remote replies only.
     this.remoteOffset = 0.100;
+    // Keep-alive for the aiming dot (see aimStart). On by default; the
+    // laser panel can turn it off.
+    this.aimEnabled = true;
+    this.aiming = false;
+    this.aimIdleMs = 180000;
   }
 
   get available() {
@@ -327,6 +332,7 @@ export class LaserLink {
   }
 
   disconnect() {
+    this.aimStop();
     try { this.device?.gatt?.disconnect(); } catch {}
     this.connected = false;
     this.boschChar = null;
@@ -362,15 +368,47 @@ export class LaserLink {
     return this.device?.name || 'laser measure';
   }
 
+  // Hold the aiming dot on while the app is waiting for a reading. The
+  // meter drops its laser after a few seconds, and waking it with the
+  // physical button costs the aim - so re-arm on an interval instead.
+  // Stops on a reading, when the app stops expecting one, on disconnect,
+  // and after aimIdleMs so a pocketed phone cannot flatten the meter.
+  aimStart() {
+    if (!this.canTrigger || !this.aimEnabled || this.aiming || this.aimIdle) return;
+    this.aiming = true;
+    this._aimSince = Date.now();
+    const tick = () => {
+      if (!this.aiming || !this.canTrigger) return this.aimStop();
+      if (Date.now() - this._aimSince > this.aimIdleMs) {
+        this.aimIdle = true;
+        this.aimStop();
+        return this.status('Laser dot parked after idling - shoot re-arms it', '');
+      }
+      this._write(this.boschChar, BOSCH_LASER_ON);
+    };
+    tick();
+    this._aimTimer = setInterval(tick, 4000);
+  }
+
+  aimStop() {
+    this.aiming = false;
+    if (this._aimTimer) clearInterval(this._aimTimer);
+    this._aimTimer = null;
+  }
+
   // Remote, shake-free measurement: arm the laser, then trigger. The
   // reading arrives through the normal notification path; if none does,
   // the meter kept 0.0 and remote measuring is off on this model.
   async remoteTrigger() {
     if (!this.canTrigger) return this.status('Remote trigger needs a connected Bosch meter', 'warn');
     const before = this._lastAt;
-    this.status('Arming laser...');
-    await this._write(this.boschChar, BOSCH_LASER_ON);
-    await new Promise((r) => setTimeout(r, 450));
+    this.aimIdle = false;
+    // Already lit for aiming: fire straight away, no arming delay.
+    if (!this.aiming) {
+      this.status('Arming laser...');
+      await this._write(this.boschChar, BOSCH_LASER_ON);
+      await new Promise((r) => setTimeout(r, 450));
+    }
     await this._write(this.boschChar, BOSCH_TRIGGER);
     setTimeout(() => {
       if (this._lastAt === before) {
@@ -466,6 +504,7 @@ export class LaserLink {
     if (this._lastValue === v && now - this._lastAt < 800) return;
     this._lastValue = v;
     this._lastAt = now;
+    this.aimIdle = false;
     // The frame kind and pre-correction value ride along so the app can
     // treat button pushes and remote replies differently (calibration
     // derives the body length from exactly that difference).

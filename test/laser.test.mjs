@@ -179,3 +179,50 @@ test('Bosch frames: 50-27/UniversalDistance indication and legacy MT reply', () 
   // Falls back to the generic heuristic for anything else.
   close(parseBoschFrame([...'2.345'].map((c) => c.charCodeAt(0))), 2.345);
 });
+
+test('aim keep-alive: re-arms while expected, skips arming on trigger, parks when idle', async () => {
+  const { LaserLink, BOSCH_LASER_ON, BOSCH_TRIGGER } = await import('../js/laser.js');
+  const writes = [];
+  const ll = new LaserLink({});
+  ll.connected = true;
+  ll.boschChar = {
+    properties: { write: false, writeWithoutResponse: true },
+    writeValueWithoutResponse: async (buf) => { writes.push([...buf]); },
+  };
+  const hex = (a) => a.join(',');
+
+  ll.aimStart();
+  assert.ok(ll.aiming, 'aiming starts');
+  assert.equal(hex(writes[0]), hex(BOSCH_LASER_ON), 'laser-on written immediately');
+  const n = writes.length;
+  ll.aimStart(); // idempotent - no second interval, no extra write
+  assert.equal(writes.length, n, 'starting twice does not double up');
+
+  // Already lit: the trigger fires without the arming write/delay.
+  await ll.remoteTrigger();
+  assert.equal(hex(writes.at(-1)), hex(BOSCH_TRIGGER), 'trigger sent');
+  assert.equal(writes.filter((w) => hex(w) === hex(BOSCH_LASER_ON)).length, 1, 'no redundant arming while aiming');
+
+  ll.aimStop();
+  assert.equal(ll.aiming, false);
+  // Not aiming: the trigger arms first.
+  writes.length = 0;
+  await ll.remoteTrigger();
+  assert.equal(hex(writes[0]), hex(BOSCH_LASER_ON), 'cold trigger arms first');
+  assert.equal(hex(writes.at(-1)), hex(BOSCH_TRIGGER));
+
+  // Idle guard: once parked, aimStart stays quiet until real activity.
+  ll.aimIdle = true;
+  ll.aimStart();
+  assert.equal(ll.aiming, false, 'parked aim does not restart by itself');
+  ll.handleFrame(new Uint8Array([0xc0, 0x55, 0x10, 0x06, 0, 0, 0, ...f32(2.5), 0]), { parse: parseBoschStrict });
+  assert.equal(ll.aimIdle, false, 'a reading clears the parked latch');
+  ll.aimStart();
+  assert.ok(ll.aiming, 'aim resumes after activity');
+  ll.aimStop();
+
+  // Disabled by preference: never starts.
+  ll.aimEnabled = false;
+  ll.aimStart();
+  assert.equal(ll.aiming, false, 'keep-alive respects the preference');
+});
