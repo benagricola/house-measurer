@@ -20,6 +20,14 @@ const COLORS = { ...PLAN_PALETTES.light.colors };
 
 const NICE = [0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50];
 
+// Label declutter: who keeps their spot when boxes collide, and how far
+// a loser may be nudged (vertically only - horizontal drift would make a
+// label look like it belongs to the neighbouring mark).
+const LBL_PRIO = (cls = '') =>
+  cls.includes('name') ? 0 : cls.includes('ghost') ? 1 : cls.includes('item') ? 2
+    : cls.includes('res') ? 3 : 4;
+const LBL_NUDGE = [0, -15, 15, -30, 30, -45, 45, -60, 60];
+
 export class PlanView {
   constructor(canvas, overlay, scalebar, callbacks = {}) {
     this.canvas = canvas;
@@ -291,9 +299,13 @@ export class PlanView {
   }
 
   // --- labels (DOM overlay) ------------------------------------------------
+  // Written in three passes on purpose: all DOM writes, then all size
+  // reads (one forced layout for the whole set), then all transforms.
+  // Interleaving would thrash layout once per label.
   updateLabels() {
     const seen = new Set();
-    for (const l of this.content.labels || []) {
+    const live = [];
+    for (const [i, l] of (this.content.labels || []).entries()) {
       seen.add(l.key);
       let el = this.labelPool.get(l.key);
       if (!el) {
@@ -301,11 +313,35 @@ export class PlanView {
         this.overlay.appendChild(el);
         this.labelPool.set(l.key, el);
       }
-      el.className = 'lbl ' + (l.cls || '');
-      el.textContent = l.text;
+      const cls = 'lbl ' + (l.cls || '');
+      if (el.className !== cls) el.className = cls;
+      if (el.textContent !== l.text) el.textContent = l.text;
       const sp = this.worldToScreen(l.x, l.y);
-      el.style.transform = `translate(-50%, -50%) translate(${Math.round(sp.x + (l.dx || 0))}px, ${Math.round(sp.y + (l.dy || 0))}px)`;
-      el.style.display = sp.x < -60 || sp.x > this.w + 60 || sp.y < -30 || sp.y > this.h + 30 ? 'none' : '';
+      const x = sp.x + (l.dx || 0), y = sp.y + (l.dy || 0);
+      const off = x < -60 || x > this.w + 60 || y < -30 || y > this.h + 30;
+      const disp = off ? 'none' : '';
+      if (el.style.display !== disp) el.style.display = disp;
+      if (!off) live.push({ l, el, x, y, i });
+    }
+    for (const e of live) { e.w = e.el.offsetWidth; e.h = e.el.offsetHeight; }
+
+    // Dense marks (a 9 cm stub wall) used to bury each other's labels.
+    // Place the ones that carry identity first and nudge the rest off
+    // the boxes already taken - a label nobody can read, or that reads
+    // as belonging to the wrong point, is worse than one sitting a
+    // little further out.
+    live.sort((a, b) => (LBL_PRIO(a.l.cls) - LBL_PRIO(b.l.cls)) || (a.i - b.i));
+    const taken = [];
+    const clash = (bx, by, w, h) => taken.some((t) =>
+      Math.abs(t.x - bx) * 2 < t.w + w + 4 && Math.abs(t.y - by) * 2 < t.h + h + 3);
+    for (const e of live) {
+      let y = e.y;
+      for (const nudge of LBL_NUDGE) {
+        if (!clash(e.x, e.y + nudge, e.w, e.h)) { y = e.y + nudge; break; }
+      }
+      taken.push({ x: e.x, y, w: e.w, h: e.h });
+      e.el.style.transform =
+        `translate(-50%, -50%) translate(${Math.round(e.x)}px, ${Math.round(y)}px)`;
     }
     for (const [key, el] of this.labelPool) {
       if (!seen.has(key)) { el.remove(); this.labelPool.delete(key); }

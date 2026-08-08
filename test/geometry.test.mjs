@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   parseDistance, fmtDist, circleIntersect, solve, pointName, CLAMP_TOL,
-  segIntersects, weakDir,
+  segIntersects, weakDir, outwardNormal,
 } from '../js/geometry.js';
 import { Store } from '../js/state.js';
 
@@ -201,4 +201,23 @@ test('weakDir: shallow rays weak across them, right angles perfectly conditioned
   // 150-degree rays: weak along the bisector's normal, mediocre cond.
   const w3 = weakDir(P(0, 0), P(-3, 0), P(3 * Math.cos(Math.PI / 6), 3 * Math.sin(Math.PI / 6)));
   assert.ok(w3.cond > 0.05 && w3.cond < 0.3, `150 degrees mediocre (${w3.cond.toFixed(3)})`);
+});
+
+test('outwardNormal: points away from the inside, whatever the winding', () => {
+  const P = (x, y) => ({ x, y });
+  // Wall along the x axis with the room above it: the band grows down.
+  const n1 = outwardNormal(P(0, 0), P(4, 0), P(2, 3));
+  close(n1.x, 0, 1e-12);
+  close(n1.y, -1, 1e-12);
+  // Same wall walked the other way: still away from the room.
+  const n2 = outwardNormal(P(4, 0), P(0, 0), P(2, 3));
+  close(n2.x, 0, 1e-12);
+  close(n2.y, -1, 1e-12);
+  // Always a unit vector, always perpendicular to the segment.
+  const n3 = outwardNormal(P(1, 1), P(4, 5), P(0, 9));
+  close(Math.hypot(n3.x, n3.y), 1, 1e-12);
+  close(n3.x * 3 + n3.y * 4, 0, 1e-12);
+  // No inside reference (nothing solved yet): still a unit normal.
+  const n4 = outwardNormal(P(0, 0), P(0, 2), null);
+  close(Math.hypot(n4.x, n4.y), 1, 1e-12);
 });

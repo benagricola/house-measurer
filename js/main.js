@@ -4,7 +4,7 @@
 import {
   parseDistance, fmtDist, circleIntersect, CLAMP_TOL, pointName,
   pointSegDist, itemCorners, pointInItem, angleDeg, interiorAngles,
-  segIntersects, weakDir,
+  segIntersects, weakDir, outwardNormal,
 } from './geometry.js';
 import { Store } from './state.js';
 import { PlanView } from './plan.js';
@@ -37,6 +37,10 @@ const ui = {
   // user turns walling on (or builds walls by hand in walls mode).
   wallPause: true,
   coachDone: false,
+  // Temporary peek: the keypad (and the item list) fold away so the plan
+  // or the 3D model gets the whole screen. Never persisted - anything
+  // that needs input unfolds it again.
+  panelHidden: false,
 };
 try {
   ui.wallPause = localStorage.getItem('house-measurer.walling') !== 'on';
@@ -255,8 +259,10 @@ function strengthenCandidates(pt) {
   if (!P || !Q) return [];
   const w = weakDir(p, P, Q);
   const out = [];
+  const tied = new Set(pointMeasurements(pt.id).map((x) => x.other.id));
   for (const c of store.state.points) {
     if (c.id === pt.id || c.id === f.r1 || c.id === f.r2 || c.floor !== pt.floor) continue;
+    if (tied.has(c.id)) continue; // already measured: re-shooting it adds nothing
     const q = pos(c.id);
     if (!q) continue;
     const d = Math.hypot(q.x - p.x, q.y - p.y);
@@ -416,7 +422,9 @@ function validateUi() {
   if (ui.refs.length !== before) ui.multiD = [];
   if (!Array.isArray(ui.multiD)) ui.multiD = [];
   if (ui.lastId && !store.point(ui.lastId)) ui.lastId = null;
+  if (ui.detailPick != null && !pos(ui.detailPick)) ui.detailPick = null;
   if (ui.flipArm != null && (ui.refs.length !== 1 || ui.refs[0] !== ui.flipArm)) ui.flipArm = null;
+  if (ui.infoPoint != null && !store.point(ui.infoPoint)) ui.infoPoint = null;
   if (ui.selItem && !store.item(ui.selItem)) ui.selItem = null;
   if (ui.activeWallId && !store.wall(ui.activeWallId)) ui.activeWallId = null;
 }
@@ -440,6 +448,33 @@ function aimTarget() {
   if (!ui.refs.length || ui.mode !== 'measure' || ui.flow || anchorMode()) return null;
   const id = multiMode() ? ui.refs[ui.multiD.length] : ui.refs[ui.active];
   return id != null && pos(id) ? id : null;
+}
+
+// The point "detail" explains: the single selected one, else the last
+// placed, else the newest solved point on this floor. The fallback
+// matters - after a reload nothing is selected and lastId is gone, and
+// detail mode used to draw no circles at all, which read as broken.
+function detailTarget() {
+  if (ui.detailPick != null && pos(ui.detailPick)) return ui.detailPick;
+  if (ui.lastId && pos(ui.lastId)) return ui.lastId;
+  for (let i = store.state.points.length - 1; i >= 0; i--) {
+    const pt = store.state.points[i];
+    if (onFloor(pt) && pos(pt.id)) return pt.id;
+  }
+  return null;
+}
+
+// Every recorded distance involving a point, with the other end resolved.
+function pointMeasurements(id) {
+  const out = [];
+  for (const m of store.state.measurements) {
+    if (m.p !== id && m.q !== id) continue;
+    const otherId = m.p === id ? m.q : m.p;
+    const other = store.point(otherId);
+    if (!other) continue;
+    out.push({ m, other, at: pos(otherId), res: store.solved.mres.get(m.id) ?? null });
+  }
+  return out;
 }
 
 // Multi-reference fixing: past the first two refs, distances are entered
@@ -468,25 +503,53 @@ function preview() {
   return { d1, d2, cands: c };
 }
 
-function wallSegments() {
-  const segs = [];
-  for (const wall of store.state.walls) {
-    if (!onFloor(wall)) continue;
-    const runs = wall.closed ? [...wall.pts, wall.pts[0]] : wall.pts;
-    for (let i = 0; i + 1 < runs.length; i++) {
-      const a = pos(runs[i]), b = pos(runs[i + 1]);
-      if (a && b) segs.push({ wallId: wall.id, seg: i, a, b, pa: runs[i], pb: runs[i + 1] });
-    }
+// One wall run as it is DRAWN: a-b is the line through the measured marks
+// (the inner face), ca-cb is the centre line of the band, pushed half a
+// thickness to the outer side. Closed rooms know their inside from the
+// polygon; an open run uses the floor's survey-point centroid - the
+// surveyor and every mark are inside the space.
+function wallBands(wall) {
+  const runs = wall.closed ? [...wall.pts, wall.pts[0]] : wall.pts;
+  const solved = wall.pts.map(pos).filter(Boolean);
+  const runCen = solved.length ? {
+    x: solved.reduce((s, q) => s + q.x, 0) / solved.length,
+    y: solved.reduce((s, q) => s + q.y, 0) / solved.length,
+  } : null;
+  const cen = wall.closed && solved.length >= 3 ? runCen : floorCentroid(wall.floor) ?? runCen;
+  const out = [];
+  for (let i = 0; i + 1 < runs.length; i++) {
+    const a = pos(runs[i]), b = pos(runs[i + 1]);
+    if (!a || !b) continue;
+    const key = `${runs[i]}:${runs[i + 1]}`;
+    const thick = wall.thick?.[key] ?? store.state.wallThickness ?? 0.09;
+    const n = cen ? outwardNormal(a, b, cen) : { x: 0, y: 0 };
+    const ox = n.x * thick / 2, oy = n.y * thick / 2;
+    out.push({
+      wallId: wall.id, seg: i, pa: runs[i], pb: runs[i + 1], key, thick, a, b,
+      ca: { x: a.x + ox, y: a.y + oy }, cb: { x: b.x + ox, y: b.y + oy },
+    });
   }
-  return segs;
+  return out;
 }
 
+function wallSegments() {
+  return store.state.walls.filter(onFloor).flatMap(wallBands);
+}
+
+// Tap tolerance follows the DRAWN band: half its thickness plus finger
+// slop, measured from the band's centre line. Testing against the line
+// through the points instead would make a thick wall untappable as soon
+// as you zoomed in far enough for the offset to exceed the slop.
 function hitWall(world, screen) {
   const s = plan.worldPerPx;
-  let best = null, bestD = 14 * s;
+  let best = null, bestIn = 0;
   for (const seg of wallSegments()) {
-    const r = pointSegDist(world, seg.a, seg.b);
-    if (r.d < bestD) { best = { ...seg, t: r.t }; bestD = r.d; }
+    const r = pointSegDist(world, seg.ca, seg.cb);
+    const reach = seg.thick / 2 + 14 * s;
+    // Relative penetration, so a tap dead on a thin wall beats one that
+    // merely grazes the edge of a thick one where the two overlap.
+    const inside = (reach - r.d) / reach;
+    if (inside > 0 && inside > bestIn) { best = { ...seg, t: r.t }; bestIn = inside; }
   }
   return best;
 }
@@ -532,6 +595,7 @@ function startFlow(flow, msg) {
   ui.flowSide = 1;
   ui.fields = ['', ''];
   ui.active = 0;
+  ui.panelHidden = false; // a flow needs the keypad; unfold it
   say(msg);
 }
 
@@ -591,9 +655,17 @@ function commitItemAt(rect, draft, mount = null) {
 
 function toggleRef(id) {
   const i = ui.refs.indexOf(id);
-  if (i >= 0) ui.refs.splice(i, 1);
-  else if (ui.refs.length < 4) ui.refs.push(id);
-  else return say('Four references is the maximum - tap one to deselect it first', 'warn');
+  // The last point you touched is the one "detail" explains - tapping
+  // another switches it, exactly as the status line promises.
+  if (i >= 0) {
+    ui.refs.splice(i, 1);
+    if (ui.detailPick === id) ui.detailPick = ui.refs.at(-1) ?? null;
+  } else if (ui.refs.length < 4) {
+    ui.refs.push(id);
+    ui.detailPick = id;
+  } else {
+    return say('Four references is the maximum - tap one to deselect it first', 'warn');
+  }
   ui.multiD = [];
   ui.flipArm = null;
   ui.message = null;
@@ -701,6 +773,7 @@ function commitPoint(side) {
   // toggle exempts reference-only points (marks you cannot see A/B from).
   const autoWall = !store.hasClosedRoomOn(activeFloor()) && ui.wallPause !== true;
   ui.lastId = store.addPoint(ui.refs[0], ui.refs[1], d1, d2, side, { autoWall });
+  ui.detailPick = null; // the new point is what detail should explain now
   ui.fields = ['', ''];
   ui.active = 0;
   const p = pos(ui.lastId);
@@ -744,6 +817,7 @@ function commitMultiPoint(forcedSide = null) {
   }
   const name = store.nextName();
   const autoWall = !store.hasClosedRoomOn(activeFloor()) && ui.wallPause !== true;
+  ui.detailPick = null;
   ui.lastId = store.addPoint(ui.refs[0], ui.refs[1], d[0], d[1], side, {
     autoWall, extras: extraRefs.map((r, i) => ({ p: r, d: d[i + 2] })),
   });
@@ -771,6 +845,7 @@ function stackRefs() {
     ui.refs[ui.refs.indexOf(id)] = nid;
     made.push(`${store.point(nid).name} above ${store.point(id).name}`);
     ui.lastId = nid;
+    ui.detailPick = null;
   }
   say(`Stacked ${made.join(', ')} - measure from ${made.length > 1 ? 'them' : 'it'} now`, 'good');
 }
@@ -820,6 +895,9 @@ function commitCheck() {
 
 function pressKey(key) {
   const f = ui.fields;
+  // Typing on a physical keyboard while the panel is folded away: show
+  // the value being typed rather than swallowing it.
+  if (ui.panelHidden && key !== 'flip') ui.panelHidden = false;
   if (anchorMode() || ['measure'].includes(ui.mode) || twoFieldFlow() || ui.flow) {
     if (key >= '0' && key <= '9') {
       if (f[ui.active].length < 7) f[ui.active] += key;
@@ -1095,6 +1173,18 @@ function handleTap(world, screen) {
       return true;
     }
   }
+
+  // No point under the tap, but a wall is: open its editor here too, so
+  // thickness and height are reachable without switching modes. Only
+  // while the panel is idle - mid-entry a stray tap must never discard
+  // typed distances, and empty-plan taps still feed the double-tap zoom.
+  if (!ui.flow && !ui.fields[0] && !ui.fields[1] && !ui.multiD.length) {
+    const seg = hitWall(world, screen);
+    if (seg) {
+      openWallEditor(seg);
+      return true;
+    }
+  }
   return false;
 }
 
@@ -1281,6 +1371,147 @@ $('doctor-sheet').addEventListener('click', (e) => {
   if (e.target === $('doctor-sheet')) $('doctor-sheet').hidden = true;
 });
 
+// --- point details ---------------------------------------------------------
+
+// Everything known about one point, on demand: what it is, how it was
+// fixed, how good that fix is, every distance recorded to it (editable
+// in place) and the best next shot to strengthen it. The per-point
+// numbers live here so the plan itself can stay readable.
+function openPointInfo(id) {
+  ui.infoPoint = id;
+  $('point-sheet').hidden = false;
+  renderPointInfo();
+}
+
+function renderPointInfo() {
+  const id = ui.infoPoint;
+  const pt = id != null ? store.point(id) : null;
+  const list = $('point-list');
+  if (!pt) {
+    $('point-sheet').hidden = true;
+    ui.infoPoint = null;
+    return;
+  }
+  $('point-title').textContent = `point ${pt.name}`;
+  list.innerHTML = '';
+  const card = (cls, html) => {
+    const el = document.createElement('div');
+    el.className = 'doc-card ' + cls;
+    el.innerHTML = html;
+    list.appendChild(el);
+    return el;
+  };
+
+  const here = pos(id);
+  const fl = store.floor(pt.floor);
+  const what = card('',
+    `<b>${pt.name}</b><p>${here
+      ? `at x ${here.x.toFixed(3)} m, y ${here.y.toFixed(3)} m (A is the origin, A to B is the x axis)`
+      : 'no position yet - see below'}${fl && store.state.floors.length > 1 ? `, ${fl.name}` : ''}</p>` +
+    '<div class="row"><input id="pi-note" placeholder="what is this mark? e.g. left window reveal" ' +
+    `value="${(pt.note ?? '').replace(/"/g, '&quot;')}"></div>`);
+  const noteEl = what.querySelector('#pi-note');
+  noteEl.addEventListener('change', () => {
+    store.setPointNote(id, noteEl.value);
+    toast(noteEl.value.trim() ? `${pt.name}: ${noteEl.value.trim()}` : `${pt.name} note cleared`, 'good');
+  });
+
+  const broken = unsolvedPoints(false).find((u) => u.pt.id === id);
+  if (broken) {
+    card('err', `<b>Cannot be placed</b><p>${broken.reason}. At least one distance below is wrong - ` +
+      'a mis-read, a cm/m mix-up, or a shot that hit a wall face instead of the mark.</p>' +
+      '<ol><li>Re-measure the suspect distance in the room.</li>' +
+      '<li>Press edit on its row below and type the corrected value.</li>' +
+      `<li>Or delete ${pt.name} in the data sheet and fix it again from references with clear sight lines.</li></ol>`);
+  }
+
+  const f = pt.fix;
+  const meas = pointMeasurements(id);
+  if (!f) {
+    card('', '<b>Anchor point</b><p>A and B define the frame - A is the origin and the line A to B ' +
+      'is the x axis. They are not fixed by anything, so they carry no residual; everything else ' +
+      'hangs off them.</p>');
+  } else if (f.stack != null) {
+    card('', `<b>Stacked above ${store.point(f.stack)?.name ?? '?'}</b>` +
+      '<p>Pinned to the same plan position on this floor, so the floors line up vertically. ' +
+      'It moves whenever the point below it moves.</p>');
+  } else {
+    const P = pos(f.r1), Q = pos(f.r2);
+    const n1 = store.point(f.r1)?.name ?? '?', n2 = store.point(f.r2)?.name ?? '?';
+    let ang = null;
+    if (P && Q && here) ang = angleDeg(P, here, Q);
+    const verdict = ang == null ? '' : ang < 15 || ang > 165 ? 'very weak'
+      : ang < 30 || ang > 150 ? 'weak' : ang < 60 || ang > 120 ? 'usable' : 'strong';
+    const sev = verdict === 'very weak' ? 'err' : verdict === 'weak' ? 'warn' : '';
+    const res = (store.solved.pres.get(id) ?? 0) * 100;
+    const bits = [];
+    if (ang != null) {
+      bits.push(`The two circles cross at ${Math.round(ang)} degrees - a ${verdict} fix. ` +
+        (verdict === 'strong'
+          ? 'Laser noise stays laser noise at this angle.'
+          : 'At a glancing crossing, millimetres of laser noise become centimetres of position error.'));
+    }
+    bits.push(`Residual ${res.toFixed(1)} cm: how far the adjusted position sits from the distances as recorded.`);
+    if (meas.length <= 2) {
+      bits.push('With only two distances there is nothing to disagree - two circles always cross exactly, ' +
+        'so a residual of zero here proves nothing. A third distance is what turns a bad reading into a visible error.');
+    }
+    card(sev, `<b>Fixed from ${n1} and ${n2}</b><p>${bits.join(' ')}</p>`);
+  }
+
+  const mcard = card('', `<b>Distances recorded to ${pt.name}</b>` +
+    (meas.length ? '' : '<p>None - this point has no measurements at all.</p>'));
+  for (const { m, other, res } of meas) {
+    const rc = res == null ? '' : Math.abs(res) < 0.01 ? 'good' : Math.abs(res) < 0.03 ? 'warn' : 'err';
+    const rtxt = res == null ? 'unsolved' : `${(res * 100).toFixed(1)} cm`;
+    const row = document.createElement('div');
+    row.className = 'log-row';
+    row.innerHTML = `<span class="log-name">to ${other.name}${other.note ? ` <span class="dim">${other.note}</span>` : ''}</span>` +
+      `<span class="log-val">${fmtDist(m.d)}</span><span class="log-res ${rc}">${rtxt}</span>` +
+      '<button data-act="edit">edit</button>';
+    row.querySelector('[data-act="edit"]').addEventListener('click', () => {
+      $('point-sheet').hidden = true;
+      startFlow({ kind: 'edit-meas', measId: m.id },
+        `Editing ${pt.name} to ${other.name} (was ${fmtDist(m.d)}) - type the new value, OK saves`);
+    });
+    mcard.appendChild(row);
+  }
+
+  // The strongest next shot: a reference along the fix's weak axis, with
+  // a clear sight line and no graze along a wall at either end.
+  const cands = f && f.stack == null ? strengthenCandidates(pt) : [];
+  if (cands.length) {
+    const c = cands[0];
+    const imp = card('info', '<b>Best way to improve it</b>' +
+      `<p>Shoot ${pt.name} to ${c.pt.name} (about ${fmtDist(c.d)}). That ray crosses the existing pair ` +
+      'at a strong angle, the sight line is clear of walls, and it does not graze along a wall at either end.' +
+      (cands.length > 1 ? ` Next best: ${cands.slice(1).map((x) => `${x.pt.name} (~${fmtDist(x.d)})`).join(', ')}.` : '') +
+      '</p>');
+    const btn = document.createElement('button');
+    btn.textContent = `select ${pt.name} + ${c.pt.name}`;
+    btn.addEventListener('click', () => {
+      ui.refs = [id, c.pt.id];
+      ui.mode = 'measure';
+      ui.flow = null;
+      $('point-sheet').hidden = true;
+      say(`Pair selected - press record and type the ${pt.name} to ${c.pt.name} distance`);
+    });
+    const row = document.createElement('div');
+    row.className = 'row';
+    row.appendChild(btn);
+    imp.appendChild(row);
+  }
+
+  card('', '<p class="dim">flip, unwall and delete for this point sit beside the reference slots ' +
+    'while it is the only one selected. Turn on <b>detail</b> (bottom right of the plan) to see these ' +
+    'distances drawn as the circles they pin the point onto.</p>');
+}
+
+$('point-close').addEventListener('click', () => { $('point-sheet').hidden = true; });
+$('point-sheet').addEventListener('click', (e) => {
+  if (e.target === $('point-sheet')) $('point-sheet').hidden = true;
+});
+
 // --- log sheet -------------------------------------------------------------
 
 function renderLog() {
@@ -1342,8 +1573,15 @@ function renderLog() {
       const fl = store.floor(pt.floor);
       const row = addRow(
         `<span class="log-name"><b>${pt.name}</b>${fl && pt.floor !== activeFloor() ? ` <span class="dim">${fl.name}</span>` : ''}</span>` +
-        `<input data-act="note" placeholder="e.g. left window reveal" value="${(pt.note ?? '').replace(/"/g, '&quot;')}">`
+        `<input data-act="note" placeholder="e.g. left window reveal" value="${(pt.note ?? '').replace(/"/g, '&quot;')}">` +
+        '<button data-act="info">details</button>'
       );
+      // Unsolved points cannot be selected on the plan, so this is their
+      // only route to the diagnosis of why.
+      row.querySelector('[data-act="info"]').addEventListener('click', () => {
+        $('log-sheet').hidden = true;
+        openPointInfo(pt.id);
+      });
       const input = row.querySelector('[data-act="note"]');
       input.addEventListener('change', () => {
         store.setPointNote(pt.id, input.value);
@@ -1635,6 +1873,10 @@ function fieldLabel(i) {
   return `to ${pt.name}${pt.note ? ` - ${pt.note}` : ''} (${i + 1} of 2)`;
 }
 
+// Matches the CSS breakpoint that moves the panel into a side column.
+const SIDEBAR_MQ = window.matchMedia('(orientation: landscape) and (min-width: 700px)');
+SIDEBAR_MQ.addEventListener?.('change', () => render());
+
 function renderPanel() {
   const anchor = anchorMode();
   const oneField = ui.flow?.kind === 'item-walloffset' || ui.flow?.kind === 'edit-meas'
@@ -1642,14 +1884,29 @@ function renderPanel() {
   const noFields = ui.flow?.kind === 'item-side' || ui.flow?.kind === 'item-wallmount';
   const showKeypad = ui.mode === 'measure' || anchor || ui.flow;
   const showFields = showKeypad && !noFields;
+  // Folded: the tall parts go, the one-line bars (status, modes, refs,
+  // shoot) stay - so the plan gets the space without losing the state.
+  // The landscape sidebar layout gains nothing (the panel keeps its
+  // column width), so the handle is not offered there - and a phone
+  // rotated into it unfolds by itself instead of getting stuck folded.
+  const foldable = (showKeypad || ui.mode === 'item') && !SIDEBAR_MQ.matches;
+  const fold = foldable && ui.panelHidden;
 
   $('modebar').style.display = anchor ? 'none' : '';
   $('refbar').style.display = !anchor && showFields && twoFieldFlow() ? '' : 'none';
-  $('fields').style.display = showFields ? '' : 'none';
-  $('keypad').style.display = showKeypad ? '' : 'none';
+  $('fields').style.display = showFields && !fold ? '' : 'none';
+  $('keypad').style.display = showKeypad && !fold ? '' : 'none';
   $('wallbar').style.display = ui.mode === 'wall' && !ui.flow ? '' : 'none';
   $('movebar').style.display = ui.mode === 'move' && !ui.flow ? '' : 'none';
-  $('itembar').style.display = ui.mode === 'item' && !ui.flow ? '' : 'none';
+  $('itembar').style.display = ui.mode === 'item' && !ui.flow && !fold ? '' : 'none';
+  const foldBtn = $('panel-fold');
+  foldBtn.style.display = foldable ? '' : 'none';
+  foldBtn.classList.toggle('folded', fold);
+  const foldWhat = showKeypad ? 'keypad' : 'list';
+  foldBtn.querySelector('.fold-txt').textContent = `${fold ? 'show' : 'hide'} ${foldWhat}`;
+  foldBtn.title = fold
+    ? `bring the ${foldWhat} back`
+    : `fold the ${foldWhat} away to see more of the plan`;
 
   for (const b of document.querySelectorAll('#modebar button[data-mode]')) {
     b.classList.toggle('on', b.dataset.mode === ui.mode);
@@ -1696,7 +1953,10 @@ function renderPanel() {
       ? `change the recorded distance between these two points (now ${fmtDist(pairM.d)})`
       : 'record the measured distance between these two points';
     $('stack-btn').style.display = !ui.flow && offFloorRefs().length ? '' : 'none';
-    $('del-point').style.display = ui.mode === 'measure' && !ui.flow && ui.refs.length === 1 ? '' : 'none';
+    const single = ui.mode === 'measure' && !ui.flow && ui.refs.length === 1;
+    $('pt-info').style.display = single ? '' : 'none';
+    if (single) $('pt-info').textContent = `${store.point(ui.refs[0]).name} details`;
+    $('del-point').style.display = single ? '' : 'none';
     const selFlip = ui.refs.length === 1 && store.point(ui.refs[0])?.fix?.side != null ? ui.refs[0] : null;
     const lastFlip = ui.refs.length !== 1 && ui.lastId && store.point(ui.lastId)?.fix?.side != null ? ui.lastId : null;
     const flipTarget = ui.mode === 'measure' && !ui.flow ? (selFlip ?? lastFlip) : null;
@@ -1873,34 +2133,16 @@ function renderPlan() {
   for (const wall of store.state.walls) {
     if (!floorVisible(wall.floor)) continue;
     const ghost = !onFloor(wall);
-    const runs = wall.closed ? [...wall.pts, wall.pts[0]] : wall.pts;
     const active = wall.id === ui.activeWallId;
-    // Measured points are on the inner wall surface: draw the wall band
-    // shifted outward so the line through the points is its inner edge.
-    // Closed rooms know their inside (the polygon); open runs use the
-    // centroid of the floor's survey points instead - the surveyor and
-    // every mark are inside the space, the far side is unreachable.
-    const solved = wall.pts.map(pos).filter(Boolean);
-    const runCen = solved.length ? {
-      x: solved.reduce((s, q) => s + q.x, 0) / solved.length,
-      y: solved.reduce((s, q) => s + q.y, 0) / solved.length,
-    } : null;
-    const cen = wall.closed && solved.length >= 3 ? runCen : floorCentroid(wall.floor) ?? runCen;
-    for (let i = 0; i + 1 < runs.length; i++) {
-      const a = pos(runs[i]), b = pos(runs[i + 1]);
-      if (!a || !b) continue;
-      const t = wall.thick?.[`${runs[i]}:${runs[i + 1]}`] ?? store.state.wallThickness ?? 0.09;
-      let ox = 0, oy = 0;
-      if (cen) {
-        const len = Math.hypot(b.x - a.x, b.y - a.y) || 1;
-        let nx = -(b.y - a.y) / len, ny = (b.x - a.x) / len;
-        const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
-        if ((cen.x - mx) * nx + (cen.y - my) * ny > 0) { nx = -nx; ny = -ny; }
-        ox = nx * t / 2; oy = ny * t / 2;
-      }
+    // Measured points are on the inner wall surface, so the band is drawn
+    // outward from the line through them (wallBands works that out - and
+    // hit-testing uses the same bands, so what you tap is what you see).
+    const editing = ui.flow?.kind === 'wall-edit' ? ui.flow : null;
+    for (const band of wallBands(wall)) {
+      const isEdit = editing && editing.wallId === wall.id && editing.key === band.key;
       content.segments.push({
-        x1: a.x + ox, y1: a.y + oy, x2: b.x + ox, y2: b.y + oy, t,
-        style: ghost ? 'wallGhost' : active ? 'wallActive' : 'wall',
+        x1: band.ca.x, y1: band.ca.y, x2: band.cb.x, y2: band.cb.y, t: band.thick,
+        style: ghost ? 'wallGhost' : active || isEdit ? 'wallActive' : 'wall',
       });
     }
     if (wall.closed && !ghost) {
@@ -1912,7 +2154,8 @@ function renderPlan() {
   // Detail view: flag ill-conditioned fixes - rays meeting at a shallow
   // (or near-straight) angle mean the circles cross at a glancing angle,
   // so millimetres of laser noise become centimetres of position error
-  // with no residual to show for it.
+  // with no residual to show for it. The name goes in the badge: at 9 cm
+  // spacing a bare number belongs to no point in particular.
   if (ui.showWork) {
     for (const pt of pts) {
       if (!onFloor(pt) || !pt.fix || pt.fix.stack != null) continue;
@@ -1922,8 +2165,8 @@ function renderPlan() {
       if (ang >= 30 && ang <= 150) continue;
       const bad = ang < 15 || ang > 165;
       content.labels.push({
-        key: `fq${pt.id}`, x: p.x, y: p.y, dy: 46,
-        text: `fix ${Math.round(ang)}°`,
+        key: `fq${pt.id}`, x: p.x, y: p.y, dy: 30,
+        text: `${pt.name} fix ${Math.round(ang)}°`,
         cls: bad ? 'res err' : 'res warn',
       });
     }
@@ -2024,7 +2267,10 @@ function renderPlan() {
     const res = store.solved.pres.get(pt.id) || 0;
     if (res >= 0.001) {
       const cls = res < 0.01 ? 'res good' : res < 0.03 ? 'res warn' : 'res err';
-      content.labels.push({ key: `r${pt.id}`, x: p.x, y: p.y, text: `${(res * 100).toFixed(1)}`, cls, dy: 15 });
+      content.labels.push({
+        key: `r${pt.id}`, x: p.x, y: p.y, dy: 15, cls,
+        text: ui.showWork ? `${pt.name} ${(res * 100).toFixed(1)} cm` : `${(res * 100).toFixed(1)}`,
+      });
     }
   }
   // Unsolved points: red marker at the nearest-consistent position (or
@@ -2111,24 +2357,22 @@ function renderPlan() {
     }
   }
 
-  // "Show working": construction circles for an existing point - the last
-  // placed one, or a single selected point. Explains how a fix was solved.
+  // "Show working": every recorded distance to the detail point, drawn as
+  // the circle it pins the point onto plus the ray and its value. Not
+  // just the two fix references - a later check measurement is exactly
+  // the thing you want to see crossing the fix circles.
   if (ui.showWork && !(pv && pv.cands)) {
-    let target = null;
-    if (ui.refs.length === 1 && store.point(ui.refs[0])?.fix) target = store.point(ui.refs[0]);
-    else if (ui.lastId && store.point(ui.lastId)?.fix) target = store.point(ui.lastId);
-    if (target) {
-      const tp = pos(target.id);
-      const dist = (a, b) => store.state.measurements.find(
-        (m) => (m.p === a && m.q === b) || (m.p === b && m.q === a))?.d;
-      for (const [i, rid] of [[0, target.fix.r1], [1, target.fix.r2]]) {
-        const rp = pos(rid), d = dist(rid, target.id);
-        if (!rp || d == null || !tp) continue;
-        content.circles.push({ cx: rp.x, cy: rp.y, r: d });
-        content.segments.push({ x1: rp.x, y1: rp.y, x2: tp.x, y2: tp.y, style: 'ray' });
+    const targetId = detailTarget();
+    const tp = targetId != null ? pos(targetId) : null;
+    if (tp) {
+      for (const { m, other, at, res } of pointMeasurements(targetId)) {
+        if (!at || !floorVisible(other.floor)) continue;
+        content.circles.push({ cx: at.x, cy: at.y, r: m.d });
+        content.segments.push({ x1: at.x, y1: at.y, x2: tp.x, y2: tp.y, style: 'ray' });
         content.labels.push({
-          key: `wk${i}`, x: (rp.x + tp.x) / 2, y: (rp.y + tp.y) / 2,
-          text: fmtDist(d), cls: 'ray',
+          key: `wk${m.id}`, x: (at.x + tp.x) / 2, y: (at.y + tp.y) / 2,
+          text: `${other.name} ${fmtDist(m.d)}${res != null && Math.abs(res) >= 0.005 ? ` (${(res * 100).toFixed(1)} cm off)` : ''}`,
+          cls: 'ray',
         });
       }
     }
@@ -2228,7 +2472,10 @@ function surveyViz() {
       const res = store.solved.pres.get(pt.id) || 0;
       if (res >= 0.001) {
         const cls = res < 0.01 ? 'res good' : res < 0.03 ? 'res warn' : 'res err';
-        viz.labels.push({ key: `r3${pt.id}`, x: p.x, y: p.y, z: base + 0.32, text: `${(res * 100).toFixed(1)}`, cls });
+        viz.labels.push({
+          key: `r3${pt.id}`, x: p.x, y: p.y, z: base + 0.32,
+          text: `${pt.name} ${(res * 100).toFixed(1)} cm`, cls,
+        });
       }
       if (pt.fix && pt.fix.stack == null) {
         const r1 = pos(pt.fix.r1), r2 = pos(pt.fix.r2);
@@ -2238,7 +2485,7 @@ function surveyViz() {
             const bad = ang < 15 || ang > 165;
             viz.labels.push({
               key: `fq3${pt.id}`, x: p.x, y: p.y, z: base + 0.14,
-              text: `fix ${Math.round(ang)}°`, cls: bad ? 'res err' : 'res warn',
+              text: `${pt.name} fix ${Math.round(ang)}°`, cls: bad ? 'res err' : 'res warn',
             });
           }
         }
@@ -2355,6 +2602,7 @@ function render() {
   }
   if (!$('log-sheet').hidden) renderLog();
   if (!$('doctor-sheet').hidden) renderDoctor();
+  if (!$('point-sheet').hidden) renderPointInfo();
 }
 
 // --- boot ------------------------------------------------------------------
@@ -2449,6 +2697,7 @@ const laser = new LaserLink({
   // (re-aimed at something else). Nothing commits - the settled value
   // sits in the field for OK, and auto mode ignores the stream.
   onTrack: (cur, { min, max }) => {
+    ui.panelHidden = false; // the rolling average has to be watchable
     const t = ui.track || (ui.track = { samples: [] });
     const now = Date.now();
     if (t.at && (now - t.at > 1500 || Math.abs(cur - t.last) > 0.05)) t.samples = [];
@@ -2472,6 +2721,7 @@ const laser = new LaserLink({
 
   onMeasurement: (m, meta = {}) => {
     buzz(25);
+    ui.panelHidden = false; // a reading that lands in a hidden field is a trap
     if (ui.laserCal) return laserCalStep(m, meta);
     const txt = m.toFixed(3).replace(/0+$/, '').replace(/\.$/, '.0');
     ui.fields[ui.active] = txt;
@@ -2694,9 +2944,11 @@ $('wall-back').addEventListener('click', () => {
 $('close-room').addEventListener('click', closeRoomAction);
 const toggleWork = () => {
   ui.showWork = !ui.showWork;
-  say(ui.showWork
-    ? 'Detail on: wall angles shown; tap a single point to see its construction circles'
-    : null);
+  if (!ui.showWork) return say(null);
+  const n = detailTarget() != null ? store.point(detailTarget())?.name : null;
+  say(n
+    ? `Detail on: wall corner angles, plus every distance to ${n} drawn as the circle it pins ${n} onto. Tap another point to switch, or press its details button for the numbers.`
+    : 'Detail on: wall corner angles. Tap a point to see the circles it was fixed from.');
 };
 $('show-work').addEventListener('click', toggleWork);
 $('show-work3d').addEventListener('click', toggleWork);
@@ -2718,6 +2970,13 @@ $('check-btn').addEventListener('click', () => {
       : `${n1} to ${n2}: type the measured distance, OK records it`);
 });
 $('stack-btn').addEventListener('click', stackRefs);
+$('pt-info').addEventListener('click', () => {
+  if (ui.refs.length === 1) openPointInfo(ui.refs[0]);
+});
+$('panel-fold').addEventListener('click', () => {
+  ui.panelHidden = !ui.panelHidden;
+  render();
+});
 $('unwall-btn').addEventListener('click', () => {
   const id = ui.refs[0];
   const pt = id != null && store.point(id);

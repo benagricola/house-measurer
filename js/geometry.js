@@ -338,3 +338,18 @@ export function weakDir(p, a, b) {
   if (l < 1e-9) return { x: 1, y: 0, cond: 1 }; // perfectly conditioned
   return { x: vx / l, y: vy / l, cond: lmax > 1e-9 ? lmin / lmax : 0 };
 }
+
+// Unit normal of segment a-b pointing AWAY from `inside`. Every measured
+// mark sits on the INNER face of its wall (the outside is unreachable),
+// so a wall band is drawn from that line outward - and both the renderer
+// and wall hit-testing have to agree on which way "outward" is.
+export function outwardNormal(a, b, inside) {
+  const dx = b.x - a.x, dy = b.y - a.y;
+  const len = Math.hypot(dx, dy) || 1;
+  let nx = -dy / len, ny = dx / len;
+  if (inside) {
+    const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+    if ((inside.x - mx) * nx + (inside.y - my) * ny > 0) { nx = -nx; ny = -ny; }
+  }
+  return { x: nx, y: ny };
+}

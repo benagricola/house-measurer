@@ -591,6 +591,171 @@ await js(`(() => {
   app.ui.refs = [pts[0].id, pts[3].id]; app.render();
 })()`);
 
+// --- point details on demand ------------------------------------------------
+// Per-point numbers live in a sheet, not scattered over the plan.
+await js(`window.app.ui.refs = []; window.app.render();`);
+await tapPoint('D');
+await settleFrame();
+assert(await js(`document.getElementById('pt-info').style.display`) !== 'none', 'details offered for a single selected point');
+assert(await js(`document.getElementById('pt-info').textContent`) === 'D details', 'details button names the point');
+await click('#pt-info');
+assert(await js(`!document.getElementById('point-sheet').hidden`), 'details sheet opens');
+await shot('17-point-details');
+{
+  const info = await js(`document.getElementById('point-list').innerText`);
+  assert(/Fixed from A and C/.test(info), `sheet says which references fixed D (${info.slice(0, 60).replace(/\n/g, ' ')})`);
+  assert(/degrees/.test(info) && /Residual/.test(info), 'sheet reports the crossing angle and the residual');
+  assert(/to A/.test(info) && /to C/.test(info) && /to B/.test(info), 'sheet lists every distance to D, check measurements included');
+  assert(/flip, unwall and delete/.test(info), 'sheet points at where the actions live');
+  assert(!/Best way to improve/.test(info), 'nothing to suggest while every other point is already tied to D');
+}
+// Add an untied point and the suggestion appears, naming it - a pair that
+// is already measured (D to B) is never proposed, since re-shooting it
+// adds no new constraint.
+await click('#point-close');
+const tmpName = await js(`(() => {
+  const st = window.app.store, pts = st.state.points;
+  const id = st.addPoint(pts[0].id, pts[1].id, 1.6, 2.2, 1, {});
+  window.app.ui.refs = [pts[3].id];
+  window.app.render();
+  return st.point(id).name;
+})()`);
+await click('#pt-info');
+{
+  const info = await js(`document.getElementById('point-list').innerText`);
+  assert(/Best way to improve it/.test(info), 'an untied neighbour becomes the suggested next shot');
+  assert(info.includes(`Shoot D to ${tmpName}`), `the suggestion names the untied point (expected ${tmpName})`);
+  assert(!/Shoot D to B/.test(info), 'a pair that is already measured is never suggested');
+  await js(`[...document.querySelectorAll('#point-list .row button')].at(-1).click()`);
+  assert((await js(`window.app.ui.refs.length`)) === 2, 'the suggestion selects the pair to measure');
+}
+await click('#undo');
+await js(`(() => {
+  const app = window.app;
+  app.ui.refs = [app.store.state.points[3].id];
+  app.render();
+})()`);
+await click('#pt-info');
+// A distance row edits that measurement directly.
+await js(`document.querySelector('#point-list [data-act="edit"]').click()`);
+assert(await js(`window.app.ui.flow?.kind`) === 'edit-meas', 'a distance row edits that measurement');
+assert(await js(`document.getElementById('point-sheet').hidden`), 'the sheet gets out of the way for the keypad');
+await js(`window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))`);
+assert(await js(`window.app.ui.flow`) === null, 'Escape cancels the edit');
+// Every point is reachable from the data sheet - including one that will
+// not solve, which cannot be tapped on the plan at all.
+await click('#log-btn');
+await js(`document.querySelectorAll('#log-list [data-act="info"]')[0].click()`);
+assert(await js(`!document.getElementById('point-sheet').hidden`), 'details reachable from the data sheet');
+assert(/Anchor point/.test(await js(`document.getElementById('point-list').innerText`)), 'A reads as an anchor, not a fix');
+await click('#point-close');
+assert(await js(`document.getElementById('point-sheet').hidden`), 'details sheet closes');
+
+// --- detail mode: the circles, and never an empty overlay -------------------
+await js(`window.app.ui.refs = []; window.app.render();`);
+await tapPoint('D');
+await click('#show-work');
+await settleFrame();
+assert(await js(`window.app.plan.content.circles.length`) >= 3, 'detail draws a circle for every distance to the point, checks included');
+assert(await js(`[...document.querySelectorAll('#overlay .lbl.ray')].some(l => /^[ABC] /.test(l.textContent))`), 'each ray label names its far end');
+// Residual badges carry their point's name once detail is on - at 9 cm
+// spacing a bare number belongs to nobody. Nudge the check measurement
+// to make sure there is a residual to badge, then undo it.
+await js(`window.app.store.updateMeasurement(window.app.store.state.measurements.at(-1).id, 4.06)`);
+await settleFrame();
+assert(await js(`[...document.querySelectorAll('#overlay .lbl.res')].some(l => /^[A-Z]+ [0-9]/.test(l.textContent))`), 'residual badges name their point in detail mode');
+await click('#undo');
+await settleFrame();
+// Tapping another point switches what detail explains.
+await tapPoint('C');
+await settleFrame();
+{
+  const far = await js(`[...document.querySelectorAll('#overlay .lbl.ray')].map(l => l.textContent.slice(0, 1))`);
+  assert(far.includes('D'), `detail follows the point just tapped (ray ends ${far.join(',')})`);
+}
+// Nothing selected, nothing placed and nothing picked (what a reload
+// looks like): detail used to draw nothing at all here.
+await js(`(() => {
+  const ui = window.app.ui;
+  ui.refs = []; ui.lastId = null; ui.detailPick = null;
+  window.app.render();
+})()`);
+await settleFrame();
+assert(await js(`window.app.plan.content.circles.length`) > 0, 'detail falls back to the newest point instead of drawing nothing');
+{
+  const overlaps = await js(`(() => {
+    const ls = [...document.querySelectorAll('#overlay .lbl')].filter(l => l.style.display !== 'none');
+    let n = 0;
+    for (let i = 0; i < ls.length; i++) for (let j = i + 1; j < ls.length; j++) {
+      const a = ls[i].getBoundingClientRect(), b = ls[j].getBoundingClientRect();
+      if (a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom) n++;
+    }
+    return n;
+  })()`);
+  assert(overlaps === 0, `no two labels sit on top of each other (${overlaps} overlapping pairs)`);
+}
+await shot('15-detail');
+await click('#show-work');
+
+// --- tapping a wall: what you tap is the band you see -----------------------
+await js(`window.app.ui.refs = []; window.app.render();`);
+await settleFrame();
+const band = await js(`(() => {
+  const segs = window.app.plan.content.segments.filter(s => s.style === 'wall');
+  const s = segs.reduce((m, x) => (!m || x.t > m.t ? x : m), null);
+  return { x: (s.x1 + s.x2) / 2, y: (s.y1 + s.y2) / 2, t: s.t };
+})()`);
+// Zoom until the band's offset from the line of marks is well outside
+// finger slop: the case that made a thick wall untappable.
+await js(`window.app.plan.setView(${band.x}, ${band.y}, 1.2)`);
+await settleFrame();
+const slopM = await js(`14 * window.app.plan.worldPerPx`);
+assert(band.t / 2 > slopM * 2, `the drawn band sits far outside the old tolerance (${(band.t / 2 * 100).toFixed(1)} cm vs ${(slopM * 100).toFixed(1)} cm)`);
+const bandPt = await js(`(() => {
+  const r = document.getElementById('plan').getBoundingClientRect();
+  const s = window.app.plan.worldToScreen(${band.x}, ${band.y});
+  return { x: Math.round(r.left + s.x), y: Math.round(r.top + s.y) };
+})()`);
+await tapAtRaw(bandPt.x, bandPt.y);
+assert(await js(`window.app.ui.flow?.kind`) === 'wall-edit', 'tapping the drawn band opens the wall editor in measure mode');
+assert(await js(`window.app.plan.content.segments.some(s => s.style === 'wallActive')`), 'the segment being edited lights up');
+await js(`window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))`);
+assert(await js(`window.app.ui.flow`) === null, 'Escape leaves the wall as it was');
+// Mid-entry the same tap must not throw the typed value away.
+await keys(['1', '2', '3']);
+await settleFrame();
+await tapAtRaw(bandPt.x, bandPt.y);
+assert(await js(`window.app.ui.flow`) === null && await js(`window.app.ui.fields[0]`) === '123', 'a wall tap while a distance is half-typed is ignored');
+await js(`window.app.ui.fields = ['','']; window.app.render();`);
+await click('#fit');
+
+// --- fold the panel away to see the plan ------------------------------------
+await settleFrame();
+const tallBefore = await js(`document.getElementById('canvas-wrap').clientHeight`);
+await click('#panel-fold');
+await settleFrame();
+assert(await js(`document.getElementById('keypad').style.display`) === 'none', 'fold hides the keypad');
+assert(await js(`document.getElementById('fields').style.display`) === 'none', 'fold hides the input box');
+assert(await js(`document.getElementById('modebar').style.display`) !== 'none', 'mode buttons stay while folded');
+assert(await js(`document.getElementById('refbar').style.display`) !== 'none', 'reference slots stay while folded');
+assert(/show keypad/.test(await js(`document.getElementById('panel-fold').textContent`)), 'the handle offers to bring it back');
+const tallAfter = await js(`document.getElementById('canvas-wrap').clientHeight`);
+assert(tallAfter > tallBefore + 150, `the plan takes the space (${tallBefore} -> ${tallAfter} px)`);
+await shot('16-folded');
+// A reading that landed in a hidden field would be a trap.
+await js(`window.app.laser.cb.onMeasurement(1.5)`);
+assert(await js(`window.app.ui.panelHidden`) === false, 'a laser reading unfolds the panel');
+assert(await js(`document.getElementById('fields').style.display`) !== 'none', 'the field is visible for it');
+await js(`window.app.ui.fields = ['','']; window.app.render();`);
+// So would a flow with no keypad.
+await click('#panel-fold');
+assert(await js(`window.app.ui.panelHidden`) === true, 'folded again');
+await click('#log-btn');
+await js(`document.querySelector('#log-list [data-act="edit"]').click()`);
+assert(await js(`window.app.ui.panelHidden`) === false, 'starting an edit unfolds the keypad');
+await js(`window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))`);
+await settleFrame();
+
 // --- items ------------------------------------------------------------------
 await click('#modebar [data-mode="item"]');
 await click('#item-new');
@@ -1238,6 +1403,11 @@ await js('window.app.ui.refs = []; window.app.render();');
 
 await send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false });
 await sleep(400);
+await settleFrame();
+// The side-column layout gains nothing from folding, so the handle is
+// not offered - and the keypad is back even if the phone was folded.
+assert(await js(`document.getElementById('panel-fold').style.display`) === 'none', 'fold handle withdrawn in the side-panel layout');
+assert(await js(`document.getElementById('keypad').style.display`) !== 'none', 'keypad shown in the side-panel layout');
 await shot('11-desktop');
 await js('window.app.toggle3D()');
 await sleep(600);

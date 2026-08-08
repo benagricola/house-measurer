@@ -45,6 +45,9 @@
     </div>
 
     <section id="panel">
+      <button id="panel-fold" title="fold the keypad away to see more of the plan">
+        <span class="grip"></span><span class="fold-txt">hide keypad</span>
+      </button>
       <div id="status"></div>
       <button id="close-room" style="display:none">close room</button>
       <div id="modebar">
@@ -61,6 +64,7 @@
         <span id="refslots"></span>
         <button id="check-btn" title="record the measured distance between these two points">record</button>
         <button id="stack-btn" style="display:none" title="pin the selected point(s) onto this floor, directly above">stack here</button>
+        <button id="pt-info" style="display:none" title="what this point is, how it was fixed, and every distance recorded to it">details</button>
         <button id="del-point" style="display:none" title="delete the selected point">delete</button>
         <button id="flip-btn" style="display:none" title="mirror this point to its other candidate position"></button>
         <button id="unwall-btn" style="display:none" title="take this point out of the wall outline (it stays as a reference)">unwall</button>
@@ -112,6 +116,14 @@
     <button id="doctor-close">x</button>
     <h2>survey check</h2>
     <div id="doctor-list"></div>
+  </div>
+</div>
+
+<div id="point-sheet" hidden>
+  <div id="point-card">
+    <button id="point-close">x</button>
+    <h2 id="point-title">point</h2>
+    <div id="point-list"></div>
   </div>
 </div>
 
@@ -196,10 +208,13 @@
       <li>Prefer chaining instead? Toggle <b>walling: on</b> (in walls mode) and each new point links into the wall outline as you measure, until the room closes (turning it on before any outline exists starts the run at A-B). Fix a wrong link in walls mode with step back; if a reference point slipped into the outline, select it and press <b>unwall</b> - the loop reroutes past it and the point stays usable.</li>
       <li>Placed a point on the wrong side and only noticed later? Tap it so it is the only selected point and press <b>flip</b> - it mirrors to the other candidate and everything measured from it re-solves. If those dependents landed mirrored as well, press flip a second time and they mirror too.</li>
       <li>The <b>survey check</b> (the amber/red pill in the header when something needs attention, or the button in the data sheet) diagnoses problems in plain words - unsolved points, disagreeing measurements, weak fix angles - and lists the exact steps to fix each, including which existing point to shoot from for the strongest improvement.</li>
-      <li>Extra check measurements (e.g. a room diagonal): select the 2 points and press the button beside the reference slots - it reads <b>record</b> for a fresh pair and <b>edit</b> when that pair already has a measurement, so it always says what it will do. Either way you get one field and OK saves; an existing measurement is changed in place, never duplicated. (Typing the value before pressing the button still commits in one press.) Every point is adjusted to best fit all measurements; disagreement shows as residuals, and a reading far off the current solution is challenged before it is accepted. Edit or delete any measurement in the data sheet. The <b>detail</b> button overlays the interior angle at every wall corner and, for a selected point, the circles it was fixed from; while typing a new point the proposed wall's corner angle previews live.</li>
+      <li>Extra check measurements (e.g. a room diagonal): select the 2 points and press the button beside the reference slots - it reads <b>record</b> for a fresh pair and <b>edit</b> when that pair already has a measurement, so it always says what it will do. Either way you get one field and OK saves; an existing measurement is changed in place, never duplicated. (Typing the value before pressing the button still commits in one press.) Every point is adjusted to best fit all measurements; disagreement shows as residuals, and a reading far off the current solution is challenged before it is accepted. Edit or delete any measurement in the data sheet. The <b>detail</b> button overlays the interior angle at every wall corner and, for one point, every distance recorded to it drawn as the circle it pins that point onto; while typing a new point the proposed wall's corner angle previews live.</li>
+      <li>Select a single point and press its <b>details</b> button (beside the reference slots) for everything about it: what it is, which two references fixed it and how squarely their circles cross, its residual, every distance recorded to it (editable there), and the single best next shot to strengthen it. The same button sits on every row of the <b>points</b> section in the data sheet - the only way in for a point that will not solve, since an unplaced point cannot be tapped.</li>
     </ol>
     <h2>walls, items, 3D</h2>
     <p>After the first room, walls are manual: in <b>walls</b> mode tap points in order (first point again closes; each room keeps its own ceiling height). In <b>items</b> mode create an item, then place it by two distances to a corner (or tap existing points as corners), on a wall, or drop it and drag in <b>move</b> mode. Measuring also works inside the 3D view - the survey pins are tappable there.</p>
+    <p><b>Tap a wall</b> - anywhere on the drawn band, in any mode, whenever nothing is half-typed - to set its thickness and height. The segment you hit lights up while you edit it. Tapping near one end sets the height at that end only (a sloped top edge); the middle sets both. Walls are drawn outward from the marks, because every measurement is to the inside face - the outside is unreachable - and taps follow the drawn band, not the line of marks.</p>
+    <p>The grip above the status line <b>folds the keypad away</b> so the plan or the model gets the whole screen; tap it again (or start anything that needs typing - a laser reading, a wall edit) to bring it back. Mode buttons, reference slots and the shoot button stay put while it is folded.</p>
     <h2>units</h2>
     <p>A number with a decimal point is metres, without is centimetres: <b>342</b> = 3.42 m, <b>3.42</b> = 3.42 m, <b>84</b> = 84 cm, <b>15.</b> = 15 m.</p>
     <h2>keys</h2>

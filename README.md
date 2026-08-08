@@ -46,15 +46,26 @@ client-side, state in localStorage, no build step.
    silently discarded - every measurement can be edited or deleted there
    and the solution recomputes live. The **detail** button on the plan
    overlays the interior angle at every wall corner (reflex corners like
-   chimney breasts read > 180) and the construction circles behind the
-   last or any single selected point; while typing a new point, the angle
-   the proposed wall would make with the run previews live. Points whose
-   two fix rays meet at a poor angle (under 30 or over 150 degrees) get a
-   "fix N°" badge: their circles cross at a glancing angle, so laser
-   noise is amplified into position error that no residual can reveal -
-   re-fix such points from a better-spread reference pair, or tie them
-   down with a recorded check measurement.
-5. Measuring also works inside the 3D view: the survey pins are tappable
+   chimney breasts read > 180) and, for one point - the last one you
+   tapped or placed, falling back to the newest - every distance recorded
+   to it drawn as the circle it pins that point onto, ray and value
+   included; while typing a new point, the angle the proposed wall would
+   make with the run previews live. Points whose two fix rays meet at a
+   poor angle (under 30 or over 150 degrees) get a "N fix N°" badge:
+   their circles cross at a glancing angle, so laser noise is amplified
+   into position error that no residual can reveal - re-fix such points
+   from a better-spread reference pair, or tie them down with a recorded
+   check measurement. Plan labels never sit on top of each other: the
+   ones that carry identity keep their spot and the rest are nudged clear.
+5. Point details: select a single point and press **details** (beside the
+   reference slots), or the button on its row in the data sheet - which
+   is the only way in for a point that will not solve, since an unplaced
+   point cannot be tapped. The sheet says what it is, which references
+   fixed it and how squarely their circles cross, its residual, every
+   distance recorded to it (each editable there), and the single best
+   next shot to strengthen it - a point along the fix's weak axis, with a
+   clear sight line, not already measured.
+6. Measuring also works inside the 3D view: the survey pins are tappable
    as references, candidates appear as pillars, and the measurement
    circles draw across the floor.
 
@@ -104,6 +115,21 @@ commit.
 - **walls** mode: tap points in sequence to draw wall polylines; tapping
   the wall's first point again closes the room outline (the closed room is
   shaded, and gets a floor in 3D).
+- **Tapping a wall** opens its thickness/height editor, from any mode
+  (measure, walls, move, items, and on the wall faces in 3D) whenever
+  nothing is half-typed - a tap mid-entry never discards a typed
+  distance. Near an end it sets the height at that end only (sloped top
+  edges); in the middle it sets both. The segment being edited lights up.
+  Wall bands are drawn *outward* from the measured marks, because every
+  measurement is to the inside face (the outside of a stone wall is
+  unreachable), and hit-testing follows the drawn band rather than the
+  line of marks - so a 55 cm wall stays tappable however far you zoom in.
+- The grip above the status line **folds the keypad away** so the plan or
+  the 3D model gets the whole screen (portrait phones especially). Mode
+  buttons, reference slots and shoot stay put; anything that needs typing
+  (a laser reading, a wall edit, a keyboard digit) unfolds it again. The
+  landscape side-panel layout has nothing to gain, so it is not offered
+  there.
 - **items** mode: create named items (width x depth x height, category
   colour, presets for fridges, worktops, windows, doors, hoods...). Place
   them three ways: by two measured distances to a corner (then a second
