@@ -429,16 +429,32 @@ function validateUi() {
   if (ui.activeWallId && !store.wall(ui.activeWallId)) ui.activeWallId = null;
 }
 
-// With a triggerable meter connected and nothing typed yet, the primary
-// key fires the laser instead of committing - one thumb position for
-// shoot, shoot, commit, so aim never has to be broken to hunt a button.
-// Only where an empty OK has no other meaning (flows that treat empty as
-// "keep current" keep their OK).
-function okIsShoot() {
+// Is the app waiting for a distance right now? Only where an empty OK
+// has no other meaning (flows that treat empty as "keep current" keep
+// their OK).
+function laserExpectsReading() {
   if (!laser.canTrigger) return false;
-  if (ui.fields[ui.active]) return false;
   if (ui.flow && ui.flow.kind !== 'record') return false;
   return ui.mode === 'measure' || anchorMode();
+}
+
+// The primary key walks three states with a triggerable meter connected:
+// aim (light the dot so you can point it), shoot (fire), OK (commit the
+// reading). One thumb position for the whole cycle, and the dot is lit
+// only because you asked - it goes out when the point is committed and
+// parks itself a minute after the last reading. With the keep-alive
+// preference off there is no aim step: shoot arms and fires in one.
+function okMode() {
+  if (!laserExpectsReading() || ui.fields[ui.active]) return 'ok';
+  if (!laser.aimEnabled) return 'shoot';
+  return laser.aiming ? 'shoot' : 'aim';
+}
+
+// A point (or a recorded distance) is finished: drop the dot at once
+// rather than let it burn to the idle timeout. The next point starts at
+// aim again - one press, and the laser is never on by accident.
+function laserDone() {
+  laser.aimStop();
 }
 
 // Which mark the next distance is for. A distance is symmetric - you
@@ -679,6 +695,7 @@ function commitAnchor() {
   ui.refs = [a, b];
   ui.fields = ['', ''];
   ui.active = 0;
+  laserDone();
   plan.fitAll([...store.solved.pos.values()]);
   toast('A and B placed', 'good');
   say(ui.wallPause
@@ -776,6 +793,7 @@ function commitPoint(side) {
   ui.detailPick = null; // the new point is what detail should explain now
   ui.fields = ['', ''];
   ui.active = 0;
+  laserDone();
   const p = pos(ui.lastId);
   if (p && !plan.isOnScreen(p.x, p.y)) plan.fitAll([...store.solved.pos.values()]);
   const wallHint = autoWall && (store.openWall()?.pts.length >= 3)
@@ -824,6 +842,7 @@ function commitMultiPoint(forcedSide = null) {
   ui.multiD = [];
   ui.fields = ['', ''];
   ui.active = 0;
+  laserDone();
   const p = pos(ui.lastId);
   if (p && !plan.isOnScreen(p.x, p.y)) plan.fitAll([...store.solved.pos.values()]);
   const res = (store.solved.pres.get(ui.lastId) || 0) * 100;
@@ -876,6 +895,7 @@ function commitCheck() {
     store.updateMeasurement(existing.id, v);
     ui.fields = ['', ''];
     ui.active = 0;
+    laserDone();
     const r0 = (store.solved.mres.get(existing.id) || 0) * 100;
     return note(`${n1} to ${n2} updated to ${fmtDist(v)} - residual ${r0.toFixed(1)} cm`,
       Math.abs(r0) < 1 ? 'good' : Math.abs(r0) < 3 ? 'warn' : 'err');
@@ -884,6 +904,7 @@ function commitCheck() {
   const r = (store.solved.mres.get(id) || 0) * 100;
   ui.fields = ['', ''];
   ui.active = 0;
+  laserDone();
   if (Math.abs(r) >= 3) {
     say(`Check recorded, but it disagrees by ${Math.abs(r).toFixed(1)} cm - all points have shifted to a compromise. If it was wrong, delete or edit it in data.`, 'err');
   } else {
@@ -916,7 +937,11 @@ function pressKey(key) {
   }
 
   if (key === 'flip') return pressFlip();
-  if (key === 'ok') return okIsShoot() ? laser.remoteTrigger() : pressOk();
+  if (key === 'ok') {
+    const mode = okMode();
+    if (mode === 'aim') { laser.aimStart(); return render(); }
+    return mode === 'shoot' ? laser.remoteTrigger() : pressOk();
+  }
   render();
 }
 
@@ -985,6 +1010,7 @@ function pressOk() {
       }
     }
     ui.checkArm = null;
+    laserDone();
     if (measId != null) {
       store.updateMeasurement(measId, v);
       toast(`${n1}-${n2} updated to ${fmtDist(v)}`, 'good');
@@ -2018,9 +2044,13 @@ function renderPanel() {
   // lives next to delete in the refbar instead.
   const okKey = document.querySelector('[data-key="ok"]');
   if (okKey) {
-    const shoot = okIsShoot();
-    okKey.textContent = shoot ? 'shoot' : 'OK';
-    okKey.classList.toggle('shoot', shoot);
+    const mode = okMode();
+    okKey.textContent = mode === 'ok' ? 'OK' : mode;
+    okKey.classList.toggle('shoot', mode === 'shoot');
+    okKey.classList.toggle('aim', mode === 'aim');
+    okKey.title = mode === 'aim' ? 'light the meter\'s laser dot so you can aim it'
+      : mode === 'shoot' ? 'fire the meter from here - no button press to shake the aim'
+      : 'commit this value';
   }
   const flipKey = document.querySelector('[data-key="flip"]');
   const zeroKey = document.querySelector('[data-key="0"]');
@@ -2593,8 +2623,9 @@ function render() {
   validateUi();
   renderPanel();
   renderCoach();
-  // The dot stays lit exactly while a reading is expected.
-  if (okIsShoot()) laser.aimStart(); else laser.aimStop();
+  // Nothing lights the dot but the aim key; it goes out as soon as the
+  // app stops expecting a reading (mode change, a sheet-driven flow).
+  if (laser.aiming && !laserExpectsReading()) laser.aimStop();
   if (ui.view === '3d') {
     if (view3d) view3d.build(store.state, store.solved, visibleLayers(), surveyViz());
   } else {
@@ -2773,14 +2804,26 @@ const laser = new LaserLink({
 
 function renderLaser() {
   const on = !!laser.connected;
-  $('laser-pill').className = 'pill ' + (on ? 'on' : 'off');
-  $('laser-pill').textContent = on ? 'connected' : 'off';
+  // Connecting takes seconds of silence after the browser's device
+  // picker closes (GATT connect, then service discovery). Say so here:
+  // the panel's own scrim hides the app status line behind it.
+  const busy = !!laser.connecting;
+  $('laser-pill').className = 'pill ' + (on ? 'on' : busy ? 'warn' : 'off');
+  $('laser-pill').textContent = on ? 'connected' : busy ? 'connecting' : 'off';
   const nameEl = $('laser-name');
-  nameEl.textContent = on
-    ? laser.deviceLabel
+  nameEl.textContent = on ? laser.deviceLabel
+    : busy ? (laser.device?.name || 'meter chosen')
     : laser.secureContextProblem || 'not connected';
-  nameEl.classList.toggle('dim', !on);
+  nameEl.classList.toggle('dim', !on && !busy);
+  const msg = $('laser-msg');
+  msg.hidden = !laser.lastStatus?.text;
+  if (laser.lastStatus?.text) {
+    msg.textContent = laser.lastStatus.text;
+    msg.className = laser.lastStatus.cls || 'dim';
+  }
   $('laser-connect').hidden = on;
+  $('laser-connect').disabled = busy;
+  $('laser-connect').textContent = busy ? 'connecting...' : 'connect';
   $('laser-disconnect').hidden = !on;
   const off = $('laser-off');
   if (document.activeElement !== off) off.value = (laser.remoteOffset * 100).toFixed(1);
@@ -2814,7 +2857,10 @@ $('laser-close').addEventListener('click', () => { $('laser-sheet').hidden = tru
 $('laser-sheet').addEventListener('click', (e) => {
   if (e.target === $('laser-sheet')) $('laser-sheet').hidden = true;
 });
-$('laser-connect').addEventListener('click', () => laser.connect());
+$('laser-connect').addEventListener('click', () => {
+  laser.connect();  // async: the panel repaints into its connecting state now
+  renderLaser();
+});
 $('laser-disconnect').addEventListener('click', () => laser.disconnect());
 $('laser-setlo').addEventListener('click', () => {
   const v = parseFloat($('laser-off').value);
@@ -2831,7 +2877,7 @@ $('aim-btn').addEventListener('click', () => {
   laser.aimEnabled = !laser.aimEnabled;
   try { localStorage.setItem('house-measurer.laserAim', laser.aimEnabled ? 'on' : 'off'); } catch {}
   if (!laser.aimEnabled) laser.aimStop();
-  toast(laser.aimEnabled ? 'Laser dot held on while aiming' : 'Laser dot keep-alive off', 'good');
+  toast(laser.aimEnabled ? 'Aim step on: aim, shoot, OK' : 'Aim step off: shoot arms and fires', 'good');
   renderLaser();
   render();
 });
@@ -3136,7 +3182,7 @@ render();
 
 // Debug / test hooks.
 window.app = {
-  store, plan, ui, render, pressKey, toggleRef, setMode, toggle3D,
+  store, plan, ui, render, renderLaser, pressKey, toggleRef, setMode, toggle3D,
   openItemForm, applyItemForm, importFromText, exportString, laser,
   get view3d() { return view3d; },
 };

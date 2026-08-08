@@ -224,6 +224,32 @@ exact decoder for that model. The Bosch UniversalDistance 50C is
 supported natively (SIG service 0xFDE8, characteristic 02a6c0d2,
 auto-sync enabled on connect; confirmed against a real device).
 
+Connecting is not instant: after the browser's device chooser closes,
+pairing and GATT service discovery take a few seconds during which the
+page looks idle. The panel therefore shows **connecting**, disables the
+connect button (a second press would open a second chooser on top of an
+attempt already in flight) and prints the link's running commentary -
+the app's own status line is behind the panel's scrim.
+
+### aim, shoot, OK
+
+With a triggerable meter connected the primary key walks three states in
+one thumb position:
+
+- **aim** lights the meter's laser dot (the meter drops it after a few
+  seconds, so the app re-arms it every 4 s). Waking the meter by its own
+  button costs the aim, which is the whole point of this step.
+- **shoot** fires it remotely - no button press to shake the aim. It
+  fires immediately because the meter is already armed.
+- **OK** commits, once a value is in the field.
+
+The dot is lit only because you asked. It is held through the whole
+point (every reading restarts the countdown, so a four-distance fix
+never parks halfway) and goes out the instant the point is committed, so
+it never burns on the wall afterwards. A minute idle parks it and the
+key offers aim again. Turning the aim step off in the laser panel
+collapses this to the old two states: shoot arms and fires in one.
+
 ### Auto survey mode
 
 With a laser connected, an **auto** toggle appears beside the reference

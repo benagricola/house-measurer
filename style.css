@@ -347,7 +347,14 @@ header button:disabled { opacity: 0.35; }
   font-weight: 700;
 }
 .key.ok:active { background: var(--ok-press); }
-/* OK doubles as the laser trigger while no value is typed. */
+/* OK walks aim -> shoot -> OK while a meter is connected: hollow while
+   the dot is off, hot once it is lit, solid teal to commit. */
+.key.ok.aim {
+  background: var(--card);
+  border-color: var(--teal);
+  color: var(--teal);
+}
+.key.ok.aim:active { background: var(--key-press); }
 .key.ok.shoot { background: var(--amber); border-color: var(--amber); }
 .key.ok.shoot:active { filter: brightness(0.9); }
 
@@ -761,6 +768,13 @@ header button.on, #modebar button.on {
 }
 #laser-name { user-select: text; -webkit-user-select: text; }
 #laser-hint { font-size: 12px; }
+/* Progress line for connect (and anything else the link says) - the
+   panel covers the app's own status line while it is open. */
+#laser-msg { font-size: 12.5px; margin-top: 8px; color: var(--muted); }
+#laser-msg.warn { color: var(--amber); }
+#laser-msg.err { color: var(--red); }
+#laser-msg.good { color: var(--green); }
+#laser-card button:disabled { opacity: 0.5; }
 
 /* ---- data sheet column headings ---- */
 .log-cols { border-bottom: 1px solid var(--line); padding: 2px 0; }

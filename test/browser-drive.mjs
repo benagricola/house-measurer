@@ -1262,8 +1262,9 @@ await js(`(() => {
   app.ui.active = 0;
   app.render();
 })()`);
-assert(await js(`document.querySelector('[data-key="ok"]').textContent`) === 'shoot', 'OK becomes shoot with a meter connected and nothing typed');
-assert(await js(`document.querySelector('[data-key="ok"]').classList.contains('shoot')`), 'shoot styling applied');
+assert(await js(`document.querySelector('[data-key="ok"]').textContent`) === 'aim', 'the key offers aim with a meter connected and nothing typed');
+assert(await js(`document.querySelector('[data-key="ok"]').classList.contains('aim')`), 'aim styling applied');
+assert(await js(`window.app.laser.aiming === false`), 'the dot stays off until it is asked for');
 {
   const stat = await js(`document.getElementById('status').textContent`);
   assert(/Distance 1 of 2/.test(stat) && /left window reveal/.test(stat), `status names the mark and its note (${stat.slice(0, 60)})`);
@@ -1277,34 +1278,72 @@ assert(await js(`document.querySelector('#field0 label').textContent`) === 'to A
 }
 await settleFrame();
 assert(await js(`document.querySelectorAll('#overlay .lbl.aim').length`) === 0, 'nothing is drawn over the plan for aiming');
-// The dot is held on while the reading is expected, so aiming does not
-// need the meter's own button.
-assert(await js(`window.app.laser.aiming === true`), 'aim keep-alive runs while a reading is expected');
+// Pressing aim lights the dot so the meter can be pointed without
+// waking it by hand; the key then offers the shot.
+await key('ok');
+assert(await js(`window.app.laser.aiming === true`), 'aim lights the dot');
+assert(await js(`document.querySelector('[data-key="ok"]').textContent`) === 'shoot', 'and the key becomes shoot');
+assert(await js(`document.querySelector('[data-key="ok"]').classList.contains('shoot')`), 'shoot styling applied');
 // Pressing it fires the meter instead of committing.
 await js(`window.app.laser._fired = 0; window.app.laser.remoteTrigger = async () => { window.app.laser._fired++; }`);
 await key('ok');
 assert(await js(`window.app.laser._fired`) === 1, 'the shoot key triggers the meter');
 assert(await js(`window.app.ui.active`) === 0, 'shooting does not advance the field');
-// A typed digit turns it back into a commit key.
+// A typed digit turns it back into a commit key - and the dot stays on,
+// because the point is not finished yet.
 await key('2');
 assert(await js(`document.querySelector('[data-key="ok"]').textContent`) === 'OK', 'OK returns once a value is typed');
-assert(await js(`window.app.laser.aiming === false`), 'a typed value stops the keep-alive');
+assert(await js(`window.app.laser.aiming === true`), 'the dot is held through the point');
 await key('ok');
 {
   const now = await js(`[...document.querySelectorAll('.refslot')].map(e => e.className.includes('now'))`);
   assert(now[0] === false && now[1] === true, 'the highlight follows to the second distance');
 }
+assert(await js(`document.querySelector('[data-key="ok"]').textContent`) === 'shoot', 'the second distance goes straight to shoot, no second aim press');
 await key('del');
 await key('del');
-assert(await js(`document.querySelector('[data-key="ok"]').textContent`) === 'shoot', 'and back to shoot when cleared');
-assert(await js(`window.app.laser.aiming === true`), 'clearing the field resumes the dot');
-// The keep-alive can be switched off in the laser panel.
+assert(await js(`document.querySelector('[data-key="ok"]').textContent`) === 'shoot', 'still shoot when the field is cleared');
+// Committing the point puts the dot out at once - it used to burn on
+// the wall for another three minutes.
+await js(`(() => { const app = window.app; app.ui.fields = ['3.0','2.9']; app.ui.active = 1; app.render(); })()`);
+await key('ok');
+assert((await state()).points.length > 4, 'point committed');
+assert(await js(`window.app.laser.aiming === false`), 'committing the point puts the dot out');
+assert(await js(`document.querySelector('[data-key="ok"]').textContent`) === 'aim', 'the next point starts from aim again');
+await click('#undo');
+// The aim step can be switched off in the laser panel: then the key
+// goes straight to shoot, arming and firing in one.
 await click('#laser-btn');
-assert(await js(`document.getElementById('aim-pill').textContent`) === 'on', 'panel shows the keep-alive on');
+assert(await js(`document.getElementById('aim-pill').textContent`) === 'on', 'panel shows the aim step on');
 await click('#aim-btn');
 assert(await js(`window.app.laser.aimEnabled === false && window.app.laser.aiming === false`), 'panel toggle stops the dot');
-assert(await js(`localStorage.getItem('house-measurer.laserAim')`) === 'off', 'keep-alive preference persists');
+assert(await js(`localStorage.getItem('house-measurer.laserAim')`) === 'off', 'aim preference persists');
+await click('#laser-close');
+await js(`(() => { const app = window.app; app.ui.fields = ['','']; app.ui.active = 0; app.render(); })()`);
+assert(await js(`document.querySelector('[data-key="ok"]').textContent`) === 'shoot', 'with the aim step off the key is shoot from the start');
+await click('#laser-btn');
 await click('#aim-btn');
+// Connecting is slow and silent behind the panel's own scrim, so the
+// panel says what is happening and refuses a second attempt.
+await js(`(() => {
+  const l = window.app.laser;
+  l._realConnected = l.connected;
+  l.connected = false;
+  l.connecting = true;
+  l.lastStatus = { text: 'Connected - looking for its measurement channel...', cls: '' };
+  window.app.renderLaser();
+})()`);
+assert(await js(`document.getElementById('laser-pill').textContent`) === 'connecting', 'panel pill shows the attempt in progress');
+assert(await js(`document.getElementById('laser-connect').disabled`) === true, 'connect is disabled while it runs');
+assert(await js(`document.getElementById('laser-connect').textContent`) === 'connecting...', 'and says so');
+assert(/looking for its measurement channel/.test(await js(`document.getElementById('laser-msg').textContent`)), 'progress is reported inside the panel');
+await js(`(() => {
+  const l = window.app.laser;
+  l.connecting = false;
+  l.connected = l._realConnected;
+  window.app.renderLaser();
+})()`);
+assert(await js(`document.getElementById('laser-pill').textContent`) === 'connected', 'panel returns to connected');
 await click('#laser-close');
 await js(`(() => { const app = window.app; app.ui.refs = []; app.ui.fields = ['','']; app.render(); })()`);
 

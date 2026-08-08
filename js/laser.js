@@ -201,10 +201,15 @@ export class LaserLink {
     // sheet; applied to remote replies only.
     this.remoteOffset = 0.100;
     // Keep-alive for the aiming dot (see aimStart). On by default; the
-    // laser panel can turn it off.
+    // laser panel can turn it off. The dot is only ever lit because the
+    // aim key asked for it, and it parks itself a minute after the last
+    // reading - a lit laser burns the meter's battery and stares at the
+    // wall long after the point is finished.
     this.aimEnabled = true;
     this.aiming = false;
-    this.aimIdleMs = 180000;
+    this.connecting = false;
+    this.aimIdleMs = 60000;
+    this.aimPollMs = 4000; // the meter drops its dot after a few seconds
   }
 
   get available() {
@@ -222,11 +227,22 @@ export class LaserLink {
     return null;
   }
 
-  status(text, cls = '') { this.cb.onStatus?.(text, cls); }
+  // The last thing said, kept so the laser panel can show progress: its
+  // own scrim covers the app's status line, which is exactly where a
+  // connection in progress used to be reported (and so went unseen).
+  status(text, cls = '') {
+    this.lastStatus = { text, cls };
+    this.cb.onStatus?.(text, cls);
+  }
 
   async connect() {
     const problem = this.secureContextProblem;
     if (problem) return this.status(problem, 'warn');
+    // One attempt at a time: connecting takes seconds of silence while
+    // GATT discovery runs, and a second press would open a second picker
+    // on top of a connection that is already going.
+    if (this.connecting) return this.status('Already connecting - give the meter a moment', 'warn');
+    this.connecting = true;
     // The picker shows every device; the user is the filter. We can only
     // ACCESS services declared here though - so cast a wide net of vendor
     // UART/measurement services. chrome://bluetooth-internals reveals a
@@ -243,12 +259,13 @@ export class LaserLink {
         acceptAllDevices: true,
         optionalServices,
       });
-      this.status('Connecting...');
+      this.status(`Connecting to ${this.device.name || 'the meter'}...`);
       this.device.addEventListener('gattserverdisconnected', () => {
         this.connected = false;
         this.status('Laser disconnected', 'warn');
       });
       const server = await this.device.gatt.connect();
+      this.status('Connected - looking for its measurement channel...');
       // Discovery: getPrimaryServices() alone is flaky on some stacks, so
       // also probe every candidate service explicitly, with one retry for
       // the discovery race. Everything found is logged for diagnosis.
@@ -328,6 +345,9 @@ export class LaserLink {
       }
       if (e.name === 'NotFoundError') return this.status('No device chosen', 'warn');
       this.status(`Bluetooth: ${e.message}`, 'warn');
+    } finally {
+      this.connecting = false;
+      this.cb.onRaw?.(''); // repaint the panel out of its connecting state
     }
   }
 
@@ -368,26 +388,32 @@ export class LaserLink {
     return this.device?.name || 'laser measure';
   }
 
-  // Hold the aiming dot on while the app is waiting for a reading. The
-  // meter drops its laser after a few seconds, and waking it with the
-  // physical button costs the aim - so re-arm on an interval instead.
-  // Stops on a reading, when the app stops expecting one, on disconnect,
-  // and after aimIdleMs so a pocketed phone cannot flatten the meter.
+  // Hold the aiming dot on so you can point the meter without waking it
+  // by hand (which costs the aim). The meter drops its laser after a few
+  // seconds, so re-arm on an interval. Started by the aim key only, and
+  // dropped on the commit that finishes a point, on disconnect, and
+  // aimIdleMs after the last reading.
   aimStart() {
-    if (!this.canTrigger || !this.aimEnabled || this.aiming || this.aimIdle) return;
+    if (!this.canTrigger || !this.aimEnabled || this.aiming) return;
     this.aiming = true;
     this._aimSince = Date.now();
     const tick = () => {
       if (!this.aiming || !this.canTrigger) return this.aimStop();
       if (Date.now() - this._aimSince > this.aimIdleMs) {
-        this.aimIdle = true;
         this.aimStop();
-        return this.status('Laser dot parked after idling - shoot re-arms it', '');
+        return this.status('Laser dot off after a minute idle - press aim for it again', '');
       }
       this._write(this.boschChar, BOSCH_LASER_ON);
     };
     tick();
-    this._aimTimer = setInterval(tick, 4000);
+    this._aimTimer = setInterval(tick, this.aimPollMs);
+    this.status('Laser dot on - aim it, then press shoot', '');
+  }
+
+  // Activity: a reading (or a shot) restarts the idle countdown, so a
+  // point taking four distances never parks halfway through.
+  aimTouch() {
+    if (this.aiming) this._aimSince = Date.now();
   }
 
   aimStop() {
@@ -402,7 +428,7 @@ export class LaserLink {
   async remoteTrigger() {
     if (!this.canTrigger) return this.status('Remote trigger needs a connected Bosch meter', 'warn');
     const before = this._lastAt;
-    this.aimIdle = false;
+    this.aimTouch();
     // Already lit for aiming: fire straight away, no arming delay.
     if (!this.aiming) {
       this.status('Arming laser...');
@@ -472,7 +498,10 @@ export class LaserLink {
       const plaus = (v) => isFinite(v) && v >= PLAUSIBLE_MIN && v <= PLAUSIBLE_MAX;
       if (type === 2) {
         const cur = f32(7);
-        if (plaus(cur)) this.cb.onTrack?.(cur, { min: f32(11), max: f32(15) });
+        if (plaus(cur)) {
+          this.aimTouch(); // a live sweep is activity too
+          this.cb.onTrack?.(cur, { min: f32(11), max: f32(15) });
+        }
         return;
       }
       if (type === 4 && !partial) {
@@ -504,7 +533,7 @@ export class LaserLink {
     if (this._lastValue === v && now - this._lastAt < 800) return;
     this._lastValue = v;
     this._lastAt = now;
-    this.aimIdle = false;
+    this.aimTouch();
     // The frame kind and pre-correction value ride along so the app can
     // treat button pushes and remote replies differently (calibration
     // derives the body length from exactly that difference).

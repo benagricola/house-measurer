@@ -180,7 +180,7 @@ test('Bosch frames: 50-27/UniversalDistance indication and legacy MT reply', () 
   close(parseBoschFrame([...'2.345'].map((c) => c.charCodeAt(0))), 2.345);
 });
 
-test('aim keep-alive: re-arms while expected, skips arming on trigger, parks when idle', async () => {
+test('aim step: lit on request, restarted by readings, parks when idle', async () => {
   const { LaserLink, BOSCH_LASER_ON, BOSCH_TRIGGER } = await import('../js/laser.js');
   const writes = [];
   const ll = new LaserLink({});
@@ -211,18 +211,45 @@ test('aim keep-alive: re-arms while expected, skips arming on trigger, parks whe
   assert.equal(hex(writes[0]), hex(BOSCH_LASER_ON), 'cold trigger arms first');
   assert.equal(hex(writes.at(-1)), hex(BOSCH_TRIGGER));
 
-  // Idle guard: once parked, aimStart stays quiet until real activity.
-  ll.aimIdle = true;
+  // Every reading restarts the idle countdown, so a four-distance point
+  // never parks halfway through.
   ll.aimStart();
-  assert.equal(ll.aiming, false, 'parked aim does not restart by itself');
+  const since = ll._aimSince;
+  await new Promise((r) => setTimeout(r, 12));
   ll.handleFrame(new Uint8Array([0xc0, 0x55, 0x10, 0x06, 0, 0, 0, ...f32(2.5), 0]), { parse: parseBoschStrict });
-  assert.equal(ll.aimIdle, false, 'a reading clears the parked latch');
-  ll.aimStart();
-  assert.ok(ll.aiming, 'aim resumes after activity');
+  assert.ok(ll._aimSince > since, 'a reading restarts the idle countdown');
   ll.aimStop();
+
+  // Left alone, the dot puts itself out and says so.
+  const said = [];
+  ll.cb.onStatus = (t) => said.push(t);
+  ll.aimIdleMs = 25;
+  ll.aimPollMs = 10;
+  ll.aimStart();
+  await new Promise((r) => setTimeout(r, 90));
+  assert.equal(ll.aiming, false, 'the dot parks itself once idle');
+  assert.ok(said.some((t) => /press aim/.test(t)), `parking says how to get it back (${said.at(-1)})`);
 
   // Disabled by preference: never starts.
   ll.aimEnabled = false;
   ll.aimStart();
-  assert.equal(ll.aiming, false, 'keep-alive respects the preference');
+  assert.equal(ll.aiming, false, 'aim step respects the preference');
+});
+
+test('connect: one attempt at a time, and the panel can see what it said', async () => {
+  const { LaserLink } = await import('../js/laser.js');
+  const said = [];
+  const ll = new LaserLink({ onStatus: (t, c) => said.push([t, c]) });
+  // No Web Bluetooth here, so the attempt fails - the point is that it
+  // fails CLEANLY: the flag must not latch, or connect would be dead.
+  await ll.connect();
+  assert.equal(ll.connecting, false, 'a failed attempt does not latch the flag');
+  assert.deepEqual(ll.lastStatus, { text: said.at(-1)[0], cls: said.at(-1)[1] },
+    'the link remembers its last words for the panel to show');
+  // While one attempt is in flight a second press is refused, not queued
+  // behind a device picker the user has already answered.
+  ll.connecting = true;
+  await ll.connect();
+  assert.match(said.at(-1)[0], /Already connecting/);
+  assert.equal(ll.connecting, true, 'the refusal leaves the attempt in flight alone');
 });
